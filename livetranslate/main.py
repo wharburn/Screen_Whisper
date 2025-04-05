@@ -220,9 +220,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "-s",
         "--source",
-        default="ru-RU",
+        default="en-US",
         type=str,
-        help="Source language (default: ru-RU). For language codes, see "
+        help="Source language (default: en-US). For language codes, see "
         "http://g.co/cloud/speech/docs/languages",
     )
     parser.add_argument(
