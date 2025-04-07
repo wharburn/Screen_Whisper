@@ -1,43 +1,27 @@
-FROM ubuntu:22.04
+FROM python:3.9-slim
 
-# Avoid prompts from apt
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Install Python and system dependencies
-RUN apt-get update && \
-    apt-get install -y \
-    python3.11 \
-    python3-pip \
-    python3-dev \
-    libportaudio2 \
-    portaudio19-dev \
-    gcc \
-    make \
-    pkg-config \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set working directory
 WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
-
-# Install Python dependencies
-RUN pip3 install --no-cache-dir -r requirements.txt
-
-# Install PyAudio using pip with specific options
-RUN pip3 install --no-cache-dir --global-option='build_ext' --global-option='-I/usr/include' PyAudio==0.2.11
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application
 COPY . .
 
-# Expose the port the app runs on
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV FLASK_APP=app.py
+ENV FLASK_ENV=production
+
+# Expose the port
 EXPOSE 8000
 
-# Set environment variables
-ENV PORT=8000
-ENV HOST=0.0.0.0
-
-# Command to run the application
-CMD ["python3", "app.py"] 
+# Run the application
+CMD ["gunicorn", "--worker-class", "eventlet", "-w", "1", "app:app"] 
