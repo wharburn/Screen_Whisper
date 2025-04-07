@@ -3,7 +3,11 @@ services:
   web:
     type: web
     env: python
-    buildCommand: bash build.sh
+    buildCommand: |
+      sudo apt-get update && \
+      sudo apt-get install -y libportaudio2 libportaudiocore1 portaudio19-dev python3-dev && \
+      python -m pip install --upgrade pip && \
+      pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
     envVars:
       - key: PYTHON_VERSION
