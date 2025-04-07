@@ -173,7 +173,7 @@
                     showStatus('Connecting to translation service...', 'info');
                     
                     // Start listening with selected languages
-                    socket.emit('start_listening', {
+                    socket.emit('start_stream', {
                         source_lang: sourceSelect.value,
                         target_lang: targetSelect.value
                     });
@@ -197,7 +197,7 @@
                     startButton.textContent = 'Start Listening';
                 }
             } else {
-                socket.emit('stop_listening');
+                socket.emit('stop_stream');
                 isListening = false;
                 startButton.textContent = 'Start Listening';
                 showStatus('Listening stopped', 'info');
