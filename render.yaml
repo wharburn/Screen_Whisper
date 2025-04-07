@@ -13,6 +13,9 @@ services:
         gcc \
         make \
         pkg-config && \
+      sudo ln -s /usr/include/portaudio.h /usr/local/include/portaudio.h && \
+      sudo ln -s /usr/include/pa_linux_alsa.h /usr/local/include/pa_linux_alsa.h && \
+      sudo ln -s /usr/include/pa_unix_oss.h /usr/local/include/pa_unix_oss.h && \
       python -m pip install --upgrade pip && \
       pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
