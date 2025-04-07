@@ -10,7 +10,6 @@ RUN apt-get update && \
     python3-pip \
     python3-dev \
     libportaudio2 \
-    libportaudiocore1 \
     portaudio19-dev \
     gcc \
     make \
