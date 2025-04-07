@@ -52,9 +52,13 @@ class MicrophoneStream:
             # Find available input devices
             input_devices = []
             for i in range(self._audio_interface.get_device_count()):
-                device_info = self._audio_interface.get_device_info_by_index(i)
-                if device_info.get('maxInputChannels') > 0:
-                    input_devices.append((i, device_info.get('name')))
+                try:
+                    device_info = self._audio_interface.get_device_info_by_index(i)
+                    if device_info and device_info.get('maxInputChannels', 0) > 0:
+                        input_devices.append((i, device_info.get('name', f'Device {i}')))
+                except Exception as e:
+                    logger.warning(f"Error getting device info for index {i}: {str(e)}")
+                    continue
             
             logger.info(f"Available input devices: {input_devices}")
             
@@ -66,25 +70,43 @@ class MicrophoneStream:
             else:
                 logger.warning("No input devices found, using default device")
             
-            # Open the audio stream
-            self._stream = self._audio_interface.open(
-                format=pyaudio.paInt16,
-                channels=1,
-                rate=self._rate,
-                input=True,
-                frames_per_buffer=self._chunk,
-                stream_callback=self._fill_buffer,
-                input_device_index=input_device_index
-            )
-            
-            if not self._stream:
-                raise RuntimeError("Failed to open audio stream")
-            
-            self._closed = False
-            self._initialized = True
-            self._stream.start_stream()
-            logger.info("Audio stream started successfully")
-            return self
+            # Open the audio stream with error handling
+            try:
+                self._stream = self._audio_interface.open(
+                    format=pyaudio.paInt16,
+                    channels=1,
+                    rate=self._rate,
+                    input=True,
+                    frames_per_buffer=self._chunk,
+                    stream_callback=self._fill_buffer,
+                    input_device_index=input_device_index,
+                    start=False  # Don't start immediately
+                )
+                
+                if not self._stream:
+                    raise RuntimeError("Failed to open audio stream")
+                
+                # Start the stream
+                self._stream.start_stream()
+                
+                # Verify stream is running
+                if not self._stream.is_active():
+                    raise RuntimeError("Stream failed to start")
+                
+                self._closed = False
+                self._initialized = True
+                logger.info("Audio stream started successfully")
+                return self
+                
+            except Exception as e:
+                logger.error(f"Error opening audio stream: {str(e)}")
+                if self._stream:
+                    try:
+                        self._stream.close()
+                    except:
+                        pass
+                raise RuntimeError(f"Failed to open audio stream: {str(e)}")
+                
         except Exception as e:
             logger.error(f"Error initializing audio stream: {str(e)}")
             await self.__aexit__(None, None, None)
@@ -94,7 +116,8 @@ class MicrophoneStream:
         self._closed = True
         if self._stream:
             try:
-                self._stream.stop_stream()
+                if self._stream.is_active():
+                    self._stream.stop_stream()
                 self._stream.close()
             except Exception as e:
                 logger.error(f"Error closing audio stream: {str(e)}")
@@ -127,6 +150,10 @@ class MicrophoneStream:
             
         while not self._closed:
             try:
+                if not self._stream or not self._stream.is_active():
+                    logger.error("Stream is not active")
+                    break
+                    
                 chunk = await self._audio_buffer.get()
                 if chunk:
                     yield chunk

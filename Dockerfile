@@ -16,16 +16,21 @@ RUN apt-get update && apt-get install -y \
 
 # Create ALSA configuration for Docker environment
 RUN mkdir -p /etc/alsa && \
-    echo "pcm.!default { type null }" > /etc/asound.conf && \
-    echo "ctl.!default { type null }" >> /etc/asound.conf && \
+    echo "pcm.!default { type plug slave.pcm \"null\" }" > /etc/asound.conf && \
+    echo "ctl.!default { type plug slave.pcm \"null\" }" >> /etc/asound.conf && \
     echo "defaults.pcm.device null" >> /etc/asound.conf && \
-    echo "defaults.ctl.device null" >> /etc/asound.conf
+    echo "defaults.ctl.device null" >> /etc/asound.conf && \
+    echo "defaults.pcm.nonblock 1" >> /etc/asound.conf && \
+    echo "defaults.pcm.period_time 0" >> /etc/asound.conf && \
+    echo "defaults.pcm.period_size 1024" >> /etc/asound.conf && \
+    echo "defaults.pcm.buffer_size 4096" >> /etc/asound.conf
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV ALSA_CARD=null
 ENV ALSA_DEVICE=null
+ENV ALSA_CONFIG_PATH=/etc/asound.conf
 
 # Set working directory
 WORKDIR /app
