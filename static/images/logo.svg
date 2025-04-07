@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1200" height="300" viewBox="0 0 1200 300" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .logo-text {
+      font-family: Arial, sans-serif;
+      font-size: 120px;
+      fill: #a8c5ff;
+      filter: drop-shadow(2px 2px 4px rgba(0,0,0,0.3));
+    }
+    .circle {
+      fill: white;
+      stroke: #a8c5ff;
+      stroke-width: 8;
+    }
+    .letter {
+      font-family: Arial, sans-serif;
+      font-size: 80px;
+      fill: #a8c5ff;
+      font-weight: bold;
+    }
+  </style>
+  <text x="50" y="180" class="logo-text">ScreenWhisper</text>
+  <circle cx="1000" cy="150" r="60" class="circle"/>
+  <text x="975" y="175" class="letter">H</text>
+</svg> 
