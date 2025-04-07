@@ -67,43 +67,41 @@ class MicrophoneStream:
             
             logger.info(f"Available input devices: {input_devices}")
             
-            # Try to open the stream with the first available input device
-            input_device_index = None
-            if input_devices:
-                input_device_index = input_devices[0][0]
-                logger.info(f"Using input device: {input_devices[0][1]} (index: {input_device_index})")
-            else:
+            # If no input devices found, use demo audio file
+            if not input_devices:
                 logger.warning("No input devices found, using demo audio file")
                 self._file_mode = True
-                # Load demo audio file
                 await self._load_demo_audio()
+                self._closed = False
+                self._initialized = True
+                return self
+            
+            # Try to open the stream with the first available input device
+            input_device_index = input_devices[0][0]
+            logger.info(f"Using input device: {input_devices[0][1]} (index: {input_device_index})")
             
             # Open the audio stream with error handling
             try:
-                if self._file_mode:
-                    # In file mode, we don't need a real stream
-                    logger.info("Using demo audio file")
-                else:
-                    self._stream = self._audio_interface.open(
-                        format=pyaudio.paInt16,
-                        channels=1,
-                        rate=self._rate,
-                        input=True,
-                        frames_per_buffer=self._chunk,
-                        stream_callback=self._fill_buffer,
-                        input_device_index=input_device_index,
-                        start=False  # Don't start immediately
-                    )
-                    
-                    if not self._stream:
-                        raise RuntimeError("Failed to open audio stream")
-                    
-                    # Start the stream
-                    self._stream.start_stream()
-                    
-                    # Verify stream is running
-                    if not self._stream.is_active():
-                        raise RuntimeError("Stream failed to start")
+                self._stream = self._audio_interface.open(
+                    format=pyaudio.paInt16,
+                    channels=1,
+                    rate=self._rate,
+                    input=True,
+                    frames_per_buffer=self._chunk,
+                    stream_callback=self._fill_buffer,
+                    input_device_index=input_device_index,
+                    start=False  # Don't start immediately
+                )
+                
+                if not self._stream:
+                    raise RuntimeError("Failed to open audio stream")
+                
+                # Start the stream
+                self._stream.start_stream()
+                
+                # Verify stream is running
+                if not self._stream.is_active():
+                    raise RuntimeError("Stream failed to start")
                 
                 self._closed = False
                 self._initialized = True
@@ -117,7 +115,13 @@ class MicrophoneStream:
                         self._stream.close()
                     except:
                         pass
-                raise RuntimeError(f"Failed to open audio stream: {str(e)}")
+                # Fall back to demo audio file
+                logger.warning("Falling back to demo audio file")
+                self._file_mode = True
+                await self._load_demo_audio()
+                self._closed = False
+                self._initialized = True
+                return self
                 
         except Exception as e:
             logger.error(f"Error initializing audio stream: {str(e)}")
