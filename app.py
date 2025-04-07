@@ -4,14 +4,13 @@ import json
 import websockets
 from urllib.parse import urlencode
 import pyaudio
-from aiohttp import web
 import socketio
 from dotenv import load_dotenv
 from collections import deque, Counter
 import logging
 import time
 from translate import translate_text_deepl, deepl_language
-from flask import Flask, render_template
+from flask import Flask, render_template, request
 from flask_socketio import SocketIO
 import wave
 import speech_recognition as sr
@@ -102,41 +101,19 @@ class MicrophoneStream:
                     break
 
             yield b"".join(data)
-
-class AudioStream:
-    def __init__(self):
-        self._audio_interface = pyaudio.PyAudio()
-        self._stream = None
-
-    async def __aenter__(self):
-        try:
-            self._stream = self._audio_interface.open(
-                format=pyaudio.paInt16,
-                channels=1,
-                rate=RATE,
-                input=True,
-                frames_per_buffer=CHUNK
-            )
-            return self
-        except Exception as e:
-            logger.error(f"Failed to initialize audio stream: {str(e)}")
-            raise RuntimeError(f"Failed to initialize audio stream: {str(e)}")
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if self._stream:
-            self._stream.stop_stream()
-            self._stream.close()
-        self._audio_interface.terminate()
-
+            
     async def read(self):
+        """Read a single chunk of audio data."""
         try:
-            data = self._stream.read(CHUNK, exception_on_overflow=False)
-            return data
+            chunk = await self._buff.get()
+            if chunk is None:
+                return None
+            return chunk
         except Exception as e:
             logger.error(f"Error reading audio data: {str(e)}")
             raise
 
-# Create a new aiohttp web application
+# Initialize Flask and SocketIO
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key')
 sio = SocketIO(app, async_mode='eventlet', cors_allowed_origins="*")
@@ -267,11 +244,11 @@ def index():
     return render_template('index.html')
 
 @sio.on('connect')
-async def handle_connect():
+def handle_connect():
     logger.info(f"Client connected: {request.sid}")
 
 @sio.on('disconnect')
-async def handle_disconnect():
+def handle_disconnect():
     logger.info(f"Client disconnected: {request.sid}")
     if request.sid in listen_tasks:
         for task in listen_tasks[request.sid]:
@@ -279,13 +256,16 @@ async def handle_disconnect():
         del listen_tasks[request.sid]
 
 @sio.on('start_stream')
-async def start_listening(sid):
+async def start_listening():
+    sid = request.sid
     try:
         logger.info(f"Starting listening session for {sid}")
-        async with AudioStream() as stream:
+        async with MicrophoneStream() as stream:
             while True:
                 try:
                     data = await stream.read()
+                    if data is None:
+                        break
                     # Process audio data here
                     await sio.emit('audio_data', {'data': data}, room=sid)
                 except Exception as e:
@@ -297,7 +277,8 @@ async def start_listening(sid):
         await sio.emit('error', {'message': str(e)}, room=sid)
 
 @sio.on('stop_stream')
-async def stop_listening(sid):
+async def stop_listening():
+    sid = request.sid
     logger.info(f"Stopping listening session for {sid}")
     if sid in listen_tasks:
         for task in listen_tasks[sid]:
