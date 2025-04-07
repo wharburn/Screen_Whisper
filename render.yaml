@@ -2,26 +2,9 @@ version: 2
 services:
   web:
     type: web
-    env: python
-    buildCommand: |
-      sudo apt-get update && \
-      sudo apt-get install -y \
-        libportaudio2 \
-        libportaudiocore1 \
-        portaudio19-dev \
-        python3-dev \
-        gcc \
-        make \
-        pkg-config && \
-      sudo ln -s /usr/include/portaudio.h /usr/local/include/portaudio.h && \
-      sudo ln -s /usr/include/pa_linux_alsa.h /usr/local/include/pa_linux_alsa.h && \
-      sudo ln -s /usr/include/pa_unix_oss.h /usr/local/include/pa_unix_oss.h && \
-      python -m pip install --upgrade pip && \
-      pip install -r requirements.txt
-    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT
+    env: docker
+    dockerfilePath: ./Dockerfile
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11
       - key: PYTHONUNBUFFERED
         value: 1
     healthCheckPath: /
