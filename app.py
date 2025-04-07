@@ -37,6 +37,7 @@ class MicrophoneStream:
         self._chunk = chunk
         self._audio_interface = pyaudio.PyAudio()
         self._stream = None
+        self._audio_buffer = asyncio.Queue()  # Initialize the buffer in __init__
 
     def __aenter__(self):
         try:
@@ -49,7 +50,6 @@ class MicrophoneStream:
                 stream_callback=self._fill_buffer,
                 input_device_index=None  # Let PyAudio choose the default device
             )
-            self._audio_buffer = asyncio.Queue()
             self._stream.start_stream()
             return self
         except Exception as e:
