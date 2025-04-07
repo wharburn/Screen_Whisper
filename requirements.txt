@@ -9,5 +9,5 @@ websockets==10.4
 numpy>=1.24.0
 gunicorn==20.1.0
 eventlet==0.33.0
-dnspython>=1.15.0,<2.0.0
+dnspython==2.4.2
 aiohttp==3.8.5
