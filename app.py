@@ -546,7 +546,7 @@ async def handle_listening(sid, source_lang, target_lang):
                             logger.error(f"Task completed with error: {str(e)}")
                             sio.emit('error', {'message': f"Processing error: {str(e)}"}, room=sid)
                             
-            except websockets.exceptions.WebSocketException as e:
+            except (websockets.WebSocketException, ConnectionError) as e:
                 logger.error(f"WebSocket connection error: {str(e)}")
                 sio.emit('error', {'message': "Failed to connect to speech recognition service"}, room=sid)
             except Exception as e:
