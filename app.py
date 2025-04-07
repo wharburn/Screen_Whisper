@@ -311,12 +311,14 @@ async def consumer(queue, sid, source_lang, target_lang):
                     
                     if translation:
                         logger.info(f"Translation successful - Original: {transcript}, Translated: {translation}")
+                        # Add debug logging for translation event
+                        logger.info(f"Emitting translation event to room {sid} with data: {{'original': {transcript}, 'translated': {translation}, 'source_lang': {source_lang}, 'target_lang': {target_lang}}}")
                         sio.emit('translation', {
                             'original': transcript,
                             'translated': translation,
                             'source_lang': source_lang,
                             'target_lang': target_lang
-                        }, room=sid)
+                        }, room=sid, namespace='/')
                         context.append(transcript)
                     else:
                         logger.error("Translation returned empty result")
@@ -327,12 +329,14 @@ async def consumer(queue, sid, source_lang, target_lang):
             elif is_final:
                 # If source and target languages are the same, just emit the original text
                 logger.info(f"No translation needed (same languages) - Text: {transcript}")
+                # Add debug logging for same-language translation event
+                logger.info(f"Emitting same-language translation event to room {sid} with data: {{'original': {transcript}, 'translated': {transcript}, 'source_lang': {source_lang}, 'target_lang': {target_lang}}}")
                 sio.emit('translation', {
                     'original': transcript,
                     'translated': transcript,
                     'source_lang': source_lang,
                     'target_lang': target_lang
-                }, room=sid)
+                }, room=sid, namespace='/')
                 context.append(transcript)
                     
         except Exception as e:

@@ -116,7 +116,10 @@
 
     <script>
         // Socket.io setup
-        const socket = io();
+        const socket = io('/', {
+            transports: ['websocket'],
+            upgrade: false
+        });
         let isListening = false;
 
         // UI elements
@@ -213,8 +216,9 @@
             }
         });
 
-        // Handle translations
+        // Handle translations with debug logging
         socket.on('translation', (data) => {
+            console.log('Received translation:', data);
             // Update current translation
             currentTranslation.textContent = data.translated;
 
@@ -244,10 +248,12 @@
 
         // Handle connection events
         socket.on('connect', () => {
+            console.log('Connected to server');
             showStatus('Connected to server', 'info');
         });
 
         socket.on('disconnect', () => {
+            console.log('Disconnected from server');
             showStatus('Disconnected from server', 'error');
             isListening = false;
             startButton.textContent = 'Start Listening';
