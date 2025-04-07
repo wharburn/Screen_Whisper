@@ -11,12 +11,6 @@ from collections import deque, Counter
 import logging
 import time
 from translate import translate_text_deepl, deepl_language
-from flask import Flask, render_template
-from flask_socketio import SocketIO, emit
-import base64
-import numpy as np
-import speech_recognition as sr
-from googletrans import Translator
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -32,12 +26,80 @@ HOST = os.getenv('HOST', '0.0.0.0')
 RATE = 16000
 CHUNK = RATE // 10  # 100ms chunks
 
+class MicrophoneStream:
+    """Opens a recording stream as a generator yielding the audio chunks."""
+    def __init__(self, rate=RATE, chunk=CHUNK):
+        self._rate = rate
+        self._chunk = chunk
+        self.loop = asyncio.get_event_loop()
+        
+        # Create a thread-safe buffer of audio data
+        self._buff = asyncio.Queue()
+        self.closed = True
+        self._audio_interface = None
+        self._audio_stream = None
+
+    async def __aenter__(self):
+        try:
+            self._audio_interface = pyaudio.PyAudio()
+            
+            # Open the audio stream
+            self._audio_stream = self._audio_interface.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=self._rate,
+                input=True,
+                frames_per_buffer=self._chunk,
+                stream_callback=self._fill_buffer,
+            )
+            self.closed = False
+            self._audio_stream.start_stream()
+            return self
+        except Exception as e:
+            if self._audio_interface:
+                self._audio_interface.terminate()
+            raise RuntimeError(f"Failed to initialize audio stream: {str(e)}")
+
+    async def __aexit__(self, *args):
+        """Closes the stream, regardless of whether the connection was lost or not."""
+        if self._audio_stream:
+            self._audio_stream.stop_stream()
+            self._audio_stream.close()
+        self.closed = True
+        # Signal the generator to terminate
+        await self._buff.put(None)
+        if self._audio_interface:
+            self._audio_interface.terminate()
+
+    def _fill_buffer(self, in_data, *_):
+        """Continuously collect data from the audio stream, into the buffer."""
+        if not self.closed:
+            self.loop.call_soon_threadsafe(self._buff.put_nowait, in_data)
+        return (in_data, pyaudio.paContinue)
+
+    async def generator(self):
+        """Generates audio chunks from the stream of audio data."""
+        while not self.closed:
+            # Use a blocking get() to ensure there's at least one chunk of data
+            chunk = await self._buff.get()
+            if chunk is None:
+                return
+            data = [chunk]
+
+            # Now consume whatever other data's still buffered
+            while True:
+                try:
+                    chunk = self._buff.get_nowait()
+                    if chunk is None:
+                        return
+                    data.append(chunk)
+                except asyncio.QueueEmpty:
+                    break
+
+            yield b"".join(data)
+
 # Create a new aiohttp web application
 app = web.Application()
-app.router.add_static('/static', 'static')
-app.router.add_get('/', handle_index)
-
-# Create a Socket.IO server
 sio = socketio.AsyncServer(async_mode='aiohttp', cors_allowed_origins='*')
 sio.attach(app)
 
@@ -45,74 +107,237 @@ sio.attach(app)
 streams = {}
 listen_tasks = {}
 
-# Initialize speech recognizer and translator
-recognizer = sr.Recognizer()
-translator = Translator()
+async def consumer(queue, sid, source_lang, target_lang):
+    """Process transcripts and translations."""
+    # Process source and target languages for DeepL
+    deepl_source = deepl_language(source_lang.split("-")[0])  # Get base language code
+    deepl_target = deepl_language(target_lang)
+    
+    logger.info(f"Original languages - Source: {source_lang}, Target: {target_lang}")
+    logger.info(f"DeepL languages - Source: {deepl_source}, Target: {deepl_target}")
+    
+    if deepl_source is None:
+        logger.warning(f"Source language '{source_lang}' not supported by DeepL")
+        logger.info("Using source language as is for transcription")
+        deepl_source = source_lang.split("-")[0].upper()
+    
+    if deepl_target is None:
+        logger.warning(f"Target language '{target_lang}' not supported by DeepL")
+        logger.info("Using source language for output (no translation)")
+        deepl_target = target_lang
+    
+    source_lang = deepl_source
+    target_lang = deepl_target
+    
+    logger.info(f"Final languages - Source: {source_lang}, Target: {target_lang}")
+    
+    context = deque(maxlen=3)  # Keep last 3 transcripts for context
+    
+    while True:
+        try:
+            speaker, transcript, is_final = await queue.get()
+            
+            if not transcript:
+                continue
+                
+            # Emit the transcript immediately
+            await sio.emit('recognition', {
+                'text': transcript,
+                'is_final': is_final
+            }, room=sid)
+            
+            # If it's a final transcript and languages are different, translate it
+            if is_final:
+                try:
+                    logger.info(f"Attempting translation - Text: {transcript}, Source: {source_lang}, Target: {target_lang}")
+                    translation = await translate_text_deepl(
+                        transcript,
+                        source_lang,
+                        target_lang,
+                        " ".join(context)
+                    )
+                    
+                    if translation:
+                        logger.info(f"Translation successful - Original: {transcript}, Translated: {translation}")
+                        await sio.emit('translation', {
+                            'original': transcript,
+                            'translated': translation,
+                            'source_lang': source_lang,
+                            'target_lang': target_lang
+                        }, room=sid)
+                        context.append(transcript)
+                    else:
+                        logger.error("Translation returned empty result")
+                        await sio.emit('error', {'message': "Translation failed - empty result"}, room=sid)
+                except Exception as e:
+                    logger.error(f"Translation error: {e}")
+                    await sio.emit('error', {'message': f"Translation error: {str(e)}"}, room=sid)
+            elif is_final:
+                # If source and target languages are the same, just emit the original text
+                logger.info(f"No translation needed (same languages) - Text: {transcript}")
+                await sio.emit('translation', {
+                    'original': transcript,
+                    'translated': transcript,
+                    'source_lang': source_lang,
+                    'target_lang': target_lang
+                }, room=sid)
+                context.append(transcript)
+                    
+        except Exception as e:
+            logger.error(f"Error in consumer: {e}")
+            await sio.emit('error', {'message': f"Processing error: {str(e)}"}, room=sid)
+            break
 
-async def handle_index(request):
-    """Serve the main page."""
-    return web.FileResponse('templates/index.html')
+async def sender(ws, stream):
+    """Send audio data to Deepgram WebSocket."""
+    try:
+        async for chunk in stream.generator():
+            if stream.closed:
+                break
+            await ws.send(chunk)
+    except Exception as e:
+        logger.error(f"Error in sender: {e}")
+
+async def receiver(ws, queue):
+    """Receive transcriptions from Deepgram WebSocket."""
+    try:
+        async for msg in ws:
+            res = json.loads(msg)
+            
+            transcript = res.get("channel", {}).get("alternatives", [{}])[0].get("transcript", "")
+            
+            if not transcript:
+                continue
+                
+            counter = Counter([x["speaker"] for x in res["channel"]["alternatives"][0]["words"]])
+            
+            if not counter:
+                continue
+                
+            speaker = counter.most_common(1)[0][0]
+            
+            if queue.full():
+                _ = await queue.get()
+                queue.task_done()
+            await queue.put((speaker, transcript, bool(res.get("is_final", False))))
+            
+    except Exception as e:
+        logger.error(f"Error in receiver: {e}")
+
+# Routes
+async def index(request):
+    """Serve the index page."""
+    with open('templates/index.html') as f:
+        return web.Response(text=f.read(), content_type='text/html')
+
+# Register routes
+app.router.add_get('/', index)
+app.router.add_static('/static', 'static')  # Add static file serving
 
 @sio.event
 async def connect(sid, environ):
     """Handle client connection."""
-    logger.info(f"Client connected: {sid}")
-    await sio.emit('connected', {'sid': sid}, room=sid)
+    logger.info(f'Client connected: {sid}')
 
 @sio.event
 async def disconnect(sid):
     """Handle client disconnection."""
-    logger.info(f"Client disconnected: {sid}")
-    if sid in streams:
-        del streams[sid]
+    logger.info(f'Client disconnected: {sid}')
     if sid in listen_tasks:
         for task in listen_tasks[sid]:
             task.cancel()
         del listen_tasks[sid]
 
 @sio.event
-async def start_listening(sid):
+async def start_listening(sid, data):
     """Start the listening session for a client."""
-    logger.info(f"Starting listening session for {sid}")
-    
+    if sid in listen_tasks and not listen_tasks[sid].done():
+        logger.warning(f"Client {sid} already has an active listening session")
+        return
+
     try:
-        # Initialize a queue for audio data
-        audio_queue = asyncio.Queue()
-        streams[sid] = audio_queue
+        # Check for Deepgram API key
+        key = os.getenv('DEEPGRAM_API_KEY')
+        if not key:
+            raise RuntimeError("DEEPGRAM_API_KEY not found in environment")
         
-        # Create a task to process audio data
-        task = asyncio.create_task(process_audio(sid, audio_queue))
-        listen_tasks[sid] = [task]
+        # Set up Deepgram connection parameters
+        params = {
+            'diarize': 'true',
+            'punctuate': 'true',
+            'filler_words': 'true',
+            'interim_results': 'true',
+            'language': data.get('source_lang', 'en-US'),
+            'encoding': 'linear16',
+            'sample_rate': str(RATE),
+        }
         
-        await sio.emit('listening_started', room=sid)
+        # Select model based on language
+        if params['language'].split("-")[0] in ("en"):
+            params["model"] = "nova-3"
+        elif params['language'].split("-")[0] in (
+            "bg", "ca", "cs", "da", "de", "el", "es", "et", "fi", "fr", "hi", "hu",
+            "id", "it", "ja", "ko", "lt", "lv", "ms", "nl", "no", "pl", "pt", "ro",
+            "ru", "sk", "sv", "th", "tr", "uk", "vi", "zh"
+        ):
+            params["model"] = "nova-2"
+        else:
+            params["model"] = "enhanced"
+        
+        query_string = urlencode(params)
+        deepgram_url = f"wss://api.deepgram.com/v1/listen?{query_string}"
+        
+        # Create queue for communication between tasks
+        queue = asyncio.Queue(maxsize=1)
+        
+        # Start the microphone stream
+        logger.info(f"Initializing microphone for client {sid}")
+        try:
+            stream = MicrophoneStream()
+            streams[sid] = stream
+            async with stream:
+                logger.info(f"Microphone initialized successfully for client {sid}")
+                
+                # Connect to Deepgram
+                logger.info(f"Connecting to Deepgram for client {sid}")
+                async with websockets.connect(
+                    deepgram_url,
+                    extra_headers={"Authorization": f"Token {key}"}
+                ) as ws:
+                    logger.info(f"Connected to Deepgram for client {sid}")
+                    
+                    # Create tasks for the three main components
+                    consumer_task = asyncio.create_task(
+                        consumer(queue, sid, data.get('source_lang', 'auto'), data.get('target_lang', 'EN'))
+                    )
+                    sender_task = asyncio.create_task(sender(ws, stream))
+                    receiver_task = asyncio.create_task(receiver(ws, queue))
+                    
+                    # Store tasks
+                    listen_tasks[sid] = asyncio.gather(consumer_task, sender_task, receiver_task)
+                    
+                    try:
+                        await listen_tasks[sid]
+                    except asyncio.CancelledError:
+                        logger.info(f"Listening session cancelled for client {sid}")
+                    except Exception as e:
+                        logger.error(f"Error in listening session for {sid}: {e}")
+                        await sio.emit('error', {'message': f"Listening session error: {str(e)}"}, room=sid)
+                    finally:
+                        # Clean up
+                        if sid in streams:
+                            del streams[sid]
+                        if sid in listen_tasks:
+                            del listen_tasks[sid]
+        except Exception as e:
+            logger.error(f"Failed to initialize microphone for client {sid}: {e}")
+            await sio.emit('error', {'message': f"Microphone initialization failed: {str(e)}"}, room=sid)
+            if sid in streams:
+                del streams[sid]
+            return
+
     except Exception as e:
         logger.error(f"Error starting listening session for {sid}: {e}")
-        await sio.emit('error', {'message': str(e)}, room=sid)
-        if sid in streams:
-            del streams[sid]
-
-@sio.event
-async def audio_data(sid, data):
-    """Receive audio data from the client."""
-    if sid in streams:
-        await streams[sid].put(data)
-
-async def process_audio(sid, audio_queue):
-    """Process audio data from the queue."""
-    try:
-        while True:
-            # Get audio data from the queue
-            audio_data = await audio_queue.get()
-            
-            # Process the audio data (e.g., convert to text, translate)
-            # This is where you would implement your audio processing logic
-            
-            # For now, just acknowledge receipt
-            await sio.emit('audio_processed', {'status': 'ok'}, room=sid)
-    except asyncio.CancelledError:
-        logger.info(f"Audio processing task cancelled for {sid}")
-    except Exception as e:
-        logger.error(f"Error processing audio for {sid}: {e}")
         await sio.emit('error', {'message': str(e)}, room=sid)
         if sid in streams:
             del streams[sid]
@@ -125,56 +350,6 @@ async def stop_listening(sid):
         for task in listen_tasks[sid]:
             task.cancel()
         del listen_tasks[sid]
-
-@app.route('/')
-def index():
-    return render_template('index.html')
-
-@socketio.on('connect')
-def handle_connect():
-    logger.info('Client connected')
-
-@socketio.on('disconnect')
-def handle_disconnect():
-    logger.info('Client disconnected')
-
-@socketio.on('audio_data')
-def handle_audio_data(data):
-    try:
-        # Decode base64 audio data
-        audio_bytes = base64.b64decode(data['audio'])
-        
-        # Convert to numpy array
-        audio_array = np.frombuffer(audio_bytes, dtype=np.int16)
-        
-        # Convert to audio data format expected by speech recognition
-        audio_data = sr.AudioData(audio_array.tobytes(), 
-                                sample_rate=16000, 
-                                sample_width=2)
-        
-        # Perform speech recognition
-        text = recognizer.recognize_google(audio_data)
-        logger.info(f"Recognized text: {text}")
-        
-        # Translate the text
-        translation = translator.translate(text, dest='es').text
-        logger.info(f"Translation: {translation}")
-        
-        # Emit results back to client
-        emit('recognition_result', {
-            'text': text,
-            'translation': translation
-        })
-        
-    except sr.UnknownValueError:
-        logger.warning("Speech recognition could not understand audio")
-        emit('error', {'message': 'Could not understand audio'})
-    except sr.RequestError as e:
-        logger.error(f"Speech recognition error: {str(e)}")
-        emit('error', {'message': 'Speech recognition service error'})
-    except Exception as e:
-        logger.error(f"Error processing audio: {str(e)}")
-        emit('error', {'message': 'Error processing audio'})
 
 if __name__ == '__main__':
     logger.info("Starting application...")

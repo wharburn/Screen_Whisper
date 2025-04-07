@@ -5,12 +5,17 @@ body {
     padding: 0;
     background-color: #f5f5f5;
     color: #333;
+    -webkit-tap-highlight-color: transparent; /* Remove tap highlight on mobile */
+    -webkit-text-size-adjust: 100%; /* Prevent font scaling in landscape */
+    touch-action: manipulation; /* Optimize touch actions */
 }
 
 .container {
     max-width: 800px;
+    width: 100%;
     margin: 0 auto;
     padding: 20px;
+    box-sizing: border-box; /* Ensure padding is included in width */
 }
 
 h1 {
@@ -33,6 +38,12 @@ h1 {
     border-radius: 5px;
     cursor: pointer;
     transition: background-color 0.3s;
+    min-height: 44px; /* Minimum touch target size */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-appearance: none; /* Remove default styling on iOS */
+    appearance: none;
 }
 
 #start-button {
@@ -40,7 +51,7 @@ h1 {
     color: white;
 }
 
-#start-button:hover {
+#start-button:hover, #start-button:active {
     background-color: #2980b9;
 }
 
@@ -49,7 +60,7 @@ h1 {
     color: white;
 }
 
-#stop-button:hover {
+#stop-button:hover, #stop-button:active {
     background-color: #c0392b;
 }
 
@@ -77,6 +88,8 @@ h1 {
     padding: 20px;
     border-radius: 5px;
     box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    word-wrap: break-word; /* Ensure text wraps properly */
+    overflow-wrap: break-word; /* For older browsers */
 }
 
 .result-box h2 {
@@ -100,5 +113,27 @@ h1 {
     .btn {
         width: 100%;
         max-width: 300px;
+    }
+}
+
+/* Additional styles for very small screens */
+@media (max-width: 360px) {
+    .container {
+        padding: 10px;
+    }
+    
+    .btn {
+        padding: 12px 15px;
+    }
+    
+    h1 {
+        font-size: 20px;
+    }
+}
+
+/* Fix for iOS Safari 100vh issue */
+@supports (-webkit-touch-callout: none) {
+    .container {
+        min-height: -webkit-fill-available;
     }
 } 
