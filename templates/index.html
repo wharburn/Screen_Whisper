@@ -15,9 +15,14 @@
                 <div class="w-48">
                     <img src="/static/images/SWlogo.png" alt="ScreenWhisper Logo" class="h-12 w-auto">
                 </div>
-                <button id="startButton" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition">
-                    Start Listening
-                </button>
+                <div class="flex space-x-2">
+                    <button id="debugButton" class="bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700 transition text-sm">
+                        Debug
+                    </button>
+                    <button id="startButton" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition">
+                        Start Listening
+                    </button>
+                </div>
             </div>
             
             <!-- Language Selection -->
@@ -115,7 +120,19 @@
     </div>
 
     <script>
-        // Socket.io setup
+        // Debug logging setup
+        const DEBUG = true;
+        function debugLog(message, data = null) {
+            if (DEBUG) {
+                if (data) {
+                    console.log(`[DEBUG] ${message}:`, data);
+                } else {
+                    console.log(`[DEBUG] ${message}`);
+                }
+            }
+        }
+
+        // Socket.io setup with debug
         const socket = io({
             transports: ['websocket', 'polling'],
             reconnection: true,
@@ -123,9 +140,11 @@
             reconnectionDelay: 1000
         });
         let isListening = false;
+        let mediaStream = null;
 
         // UI elements
         const startButton = document.getElementById('startButton');
+        const debugButton = document.getElementById('debugButton');
         const sourceSelect = document.getElementById('sourceLanguage');
         const targetSelect = document.getElementById('targetLanguage');
         const currentRecognition = document.getElementById('currentRecognition');
@@ -135,10 +154,61 @@
         const sourceLanguageDisplay = document.getElementById('sourceLanguageDisplay');
         const targetLanguageDisplay = document.getElementById('targetLanguageDisplay');
 
+        // Debug functionality
+        debugButton.addEventListener('click', () => {
+            debugLog('Debug button clicked');
+            
+            // Test translation display
+            const testData = {
+                original: "Test original text",
+                translated: "Test translated text",
+                source_lang: "EN",
+                target_lang: "ES"
+            };
+            
+            // Manually trigger translation event
+            debugLog('Manually triggering translation event with:', testData);
+            currentTranslation.textContent = testData.translated;
+            
+            // Add to history
+            const historyItem = document.createElement('div');
+            historyItem.className = 'p-2 bg-gray-700 rounded shadow border border-gray-600';
+            historyItem.innerHTML = `
+                <div class="text-sm text-gray-400">${testData.original}</div>
+                <div class="font-medium text-white">${testData.translated}</div>
+            `;
+            translationHistory.insertBefore(historyItem, translationHistory.firstChild);
+            
+            // Show debug info
+            showStatus('Debug: Translation display test completed', 'info');
+            
+            // Log connection status
+            debugLog('Socket connected:', socket.connected);
+            debugLog('Socket ID:', socket.id);
+            
+            // Check microphone status
+            if (mediaStream) {
+                debugLog('Media stream active:', mediaStream.active);
+                debugLog('Media tracks:', mediaStream.getTracks().map(track => ({
+                    kind: track.kind,
+                    label: track.label,
+                    enabled: track.enabled,
+                    muted: track.muted,
+                    readyState: track.readyState
+                })));
+            } else {
+                debugLog('No media stream active');
+            }
+        });
+
         // Update language displays
         function updateLanguageDisplays() {
             sourceLanguageDisplay.textContent = sourceSelect.options[sourceSelect.selectedIndex].text;
             targetLanguageDisplay.textContent = targetSelect.options[targetSelect.selectedIndex].text;
+            debugLog('Language displays updated', {
+                source: sourceLanguageDisplay.textContent,
+                target: targetLanguageDisplay.textContent
+            });
         }
 
         sourceSelect.addEventListener('change', updateLanguageDisplays);
@@ -146,6 +216,7 @@
         updateLanguageDisplays();
 
         function showStatus(message, type = 'info') {
+            debugLog(`Status: ${message} (${type})`);
             statusMessage.textContent = message;
             statusMessage.className = `mb-6 p-4 rounded ${type === 'error' ? 'bg-red-900 text-red-200' : 'bg-blue-900 text-blue-200'}`;
             statusMessage.classList.remove('hidden');
@@ -165,29 +236,54 @@
 
         // Handle start/stop button click
         startButton.addEventListener('click', async () => {
+            debugLog('Start/Stop button clicked', { isListening });
+            
             if (!isListening) {
                 try {
                     startButton.disabled = true;
                     startButton.textContent = 'Initializing...';
                     showStatus('Initializing microphone...', 'info');
                     
-                    // Request microphone permission
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    stream.getTracks().forEach(track => track.stop()); // Stop the stream after permission is granted
+                    // Request microphone permission with specific constraints for mobile
+                    const constraints = {
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true
+                        }
+                    };
                     
+                    debugLog('Requesting microphone access with constraints:', constraints);
+                    mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+                    debugLog('Microphone access granted', {
+                        active: mediaStream.active,
+                        tracks: mediaStream.getTracks().map(track => ({
+                            kind: track.kind,
+                            label: track.label,
+                            enabled: track.enabled,
+                            muted: track.muted,
+                            readyState: track.readyState
+                        }))
+                    });
+                    
+                    // Don't stop the tracks immediately - keep them active
+                    // This is important for mobile devices
                     showStatus('Connecting to translation service...', 'info');
                     
                     // Start listening with selected languages
-                    socket.emit('start_stream', {
+                    const languageData = {
                         source_lang: sourceSelect.value,
                         target_lang: targetSelect.value
-                    });
+                    };
+                    debugLog('Emitting start_stream event with data:', languageData);
+                    socket.emit('start_stream', languageData);
                     
                     isListening = true;
                     startButton.textContent = 'Stop Listening';
                     startButton.disabled = false;
                     showStatus('Listening started', 'info');
                 } catch (error) {
+                    debugLog('Error starting microphone:', error);
                     console.error('Error starting microphone:', error);
                     let errorMessage = 'Error: ';
                     if (error.name === 'NotAllowedError') {
@@ -202,7 +298,19 @@
                     startButton.textContent = 'Start Listening';
                 }
             } else {
+                debugLog('Stopping listening');
                 socket.emit('stop_stream');
+                
+                // Stop all tracks in the media stream
+                if (mediaStream) {
+                    debugLog('Stopping media stream tracks');
+                    mediaStream.getTracks().forEach(track => {
+                        track.stop();
+                        debugLog(`Track stopped: ${track.label}`);
+                    });
+                    mediaStream = null;
+                }
+                
                 isListening = false;
                 startButton.textContent = 'Start Listening';
                 showStatus('Listening stopped', 'info');
@@ -211,46 +319,56 @@
 
         // Handle real-time recognition updates
         socket.on('recognition', (data) => {
-            console.log('Received recognition:', data);
+            debugLog('Received recognition:', data);
             if (data.is_final) {
                 currentRecognition.textContent = data.text;
+                debugLog('Updated recognition (final):', data.text);
             } else {
                 currentRecognition.textContent = data.text + '...';
+                debugLog('Updated recognition (interim):', data.text + '...');
             }
         });
 
         // Handle translations with debug logging
         socket.on('translation', (data) => {
-            console.log('Received translation:', data);
+            debugLog('Received translation event:', data);
             
-            // Update current translation immediately
-            if (data && data.translated) {
-                currentTranslation.textContent = data.translated;
-                console.log('Updated current translation to:', data.translated);
-            } else {
-                console.warn('Translation data is missing or invalid:', data);
-            }
+            // Force update the DOM to ensure the translation is displayed
+            requestAnimationFrame(() => {
+                // Update current translation
+                if (data && data.translated) {
+                    debugLog('Updating current translation to:', data.translated);
+                    currentTranslation.textContent = data.translated;
+                    
+                    // Add to history
+                    const historyItem = document.createElement('div');
+                    historyItem.className = 'p-2 bg-gray-700 rounded shadow border border-gray-600';
+                    historyItem.innerHTML = `
+                        <div class="text-sm text-gray-400">${data.original || ''}</div>
+                        <div class="font-medium text-white">${data.translated || ''}</div>
+                    `;
+                    translationHistory.insertBefore(historyItem, translationHistory.firstChild);
+                    debugLog('Added translation to history');
 
-            // Add to history
-            if (data && data.original && data.translated) {
-                const historyItem = document.createElement('div');
-                historyItem.className = 'p-2 bg-gray-700 rounded shadow border border-gray-600';
-                historyItem.innerHTML = `
-                    <div class="text-sm text-gray-400">${data.original}</div>
-                    <div class="font-medium text-white">${data.translated}</div>
-                `;
-                translationHistory.insertBefore(historyItem, translationHistory.firstChild);
-                console.log('Added translation to history');
-
-                // Limit history items
-                if (translationHistory.children.length > 10) {
-                    translationHistory.removeChild(translationHistory.lastChild);
+                    // Limit history items
+                    if (translationHistory.children.length > 10) {
+                        translationHistory.removeChild(translationHistory.lastChild);
+                        debugLog('Removed oldest history item');
+                    }
+                    
+                    // Force a reflow to ensure the UI updates
+                    currentTranslation.offsetHeight;
+                    debugLog('Forced UI reflow');
+                } else {
+                    debugLog('Translation data is missing or invalid:', data);
+                    console.warn('Translation data is missing or invalid:', data);
                 }
-            }
+            });
         });
 
         // Handle errors
         socket.on('error', (data) => {
+            debugLog('Received error event:', data);
             console.error('Received error:', data);
             showStatus(data.message, 'error');
             if (startButton.disabled) {
@@ -261,11 +379,13 @@
 
         // Handle connection events
         socket.on('connect', () => {
+            debugLog('Connected to server');
             console.log('Connected to server');
             showStatus('Connected to server', 'info');
         });
 
         socket.on('disconnect', () => {
+            debugLog('Disconnected from server');
             console.log('Disconnected from server');
             showStatus('Disconnected from server', 'error');
             isListening = false;
@@ -273,6 +393,7 @@
         });
 
         socket.on('connect_error', (error) => {
+            debugLog('Connection error:', error);
             console.error('Connection error:', error);
             showStatus(`Connection error: ${error.message}`, 'error');
         });
