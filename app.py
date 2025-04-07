@@ -35,11 +35,38 @@ class MicrophoneStream:
     def __init__(self, rate=RATE, chunk=CHUNK):
         self._rate = rate
         self._chunk = chunk
-        self._audio_interface = pyaudio.PyAudio()
+        self._audio_interface = None
         self._stream = None
+        self._audio_buffer = None
+        self._closed = True
+        self._initialized = False
 
-    def __aenter__(self):
+    async def __aenter__(self):
         try:
+            # Initialize PyAudio
+            self._audio_interface = pyaudio.PyAudio()
+            
+            # Create a buffer for audio data
+            self._audio_buffer = asyncio.Queue()
+            
+            # Find available input devices
+            input_devices = []
+            for i in range(self._audio_interface.get_device_count()):
+                device_info = self._audio_interface.get_device_info_by_index(i)
+                if device_info.get('maxInputChannels') > 0:
+                    input_devices.append((i, device_info.get('name')))
+            
+            logger.info(f"Available input devices: {input_devices}")
+            
+            # Try to open the stream with the first available input device
+            input_device_index = None
+            if input_devices:
+                input_device_index = input_devices[0][0]
+                logger.info(f"Using input device: {input_devices[0][1]} (index: {input_device_index})")
+            else:
+                logger.warning("No input devices found, using default device")
+            
+            # Open the audio stream
             self._stream = self._audio_interface.open(
                 format=pyaudio.paInt16,
                 channels=1,
@@ -47,42 +74,58 @@ class MicrophoneStream:
                 input=True,
                 frames_per_buffer=self._chunk,
                 stream_callback=self._fill_buffer,
-                input_device_index=None  # Let PyAudio choose the default device
+                input_device_index=input_device_index
             )
-            self._audio_buffer = asyncio.Queue()
+            
+            if not self._stream:
+                raise RuntimeError("Failed to open audio stream")
+            
+            self._closed = False
+            self._initialized = True
             self._stream.start_stream()
+            logger.info("Audio stream started successfully")
             return self
         except Exception as e:
             logger.error(f"Error initializing audio stream: {str(e)}")
-            if self._stream:
-                self._stream.close()
-            if self._audio_interface:
-                self._audio_interface.terminate()
+            await self.__aexit__(None, None, None)
             raise RuntimeError(f"Failed to initialize audio stream: {str(e)}")
 
-    def __aexit__(self, type, value, traceback):
+    async def __aexit__(self, type, value, traceback):
+        self._closed = True
         if self._stream:
-            self._stream.stop_stream()
-            self._stream.close()
+            try:
+                self._stream.stop_stream()
+                self._stream.close()
+            except Exception as e:
+                logger.error(f"Error closing audio stream: {str(e)}")
         if self._audio_interface:
-            self._audio_interface.terminate()
+            try:
+                self._audio_interface.terminate()
+            except Exception as e:
+                logger.error(f"Error terminating audio interface: {str(e)}")
+        self._initialized = False
+        logger.info("Audio stream closed")
 
     def _fill_buffer(self, in_data, frame_count, time_info, status_flags):
         """Continuously collect data from the audio stream into the buffer."""
-        try:
-            self._audio_buffer.put_nowait(in_data)
-        except asyncio.QueueFull:
-            logger.warning("Audio buffer is full, dropping oldest chunk")
+        if not self._closed and self._audio_buffer and self._initialized:
             try:
-                self._audio_buffer.get_nowait()  # Remove oldest chunk
-                self._audio_buffer.put_nowait(in_data)  # Add new chunk
-            except (asyncio.QueueEmpty, asyncio.QueueFull):
-                pass
+                self._audio_buffer.put_nowait(in_data)
+            except asyncio.QueueFull:
+                logger.warning("Audio buffer is full, dropping oldest chunk")
+                try:
+                    self._audio_buffer.get_nowait()  # Remove oldest chunk
+                    self._audio_buffer.put_nowait(in_data)  # Add new chunk
+                except (asyncio.QueueEmpty, asyncio.QueueFull):
+                    pass
         return (in_data, pyaudio.paContinue)
 
     async def generator(self):
         """Generates audio chunks from the stream."""
-        while True:
+        if not self._initialized:
+            raise RuntimeError("Audio stream not initialized")
+            
+        while not self._closed:
             try:
                 chunk = await self._audio_buffer.get()
                 if chunk:
@@ -138,7 +181,7 @@ async def consumer(queue, sid, source_lang, target_lang):
             logger.info(f"Received transcript for {sid}: '{transcript}' (final: {is_final})")
                 
             # Emit the transcript immediately
-            await sio.emit('recognition', {
+            sio.emit('recognition', {
                 'text': transcript,
                 'is_final': is_final
             }, room=sid)
@@ -156,7 +199,7 @@ async def consumer(queue, sid, source_lang, target_lang):
                     
                     if translation:
                         logger.info(f"Translation successful - Original: {transcript}, Translated: {translation}")
-                        await sio.emit('translation', {
+                        sio.emit('translation', {
                             'original': transcript,
                             'translated': translation,
                             'source_lang': source_lang,
@@ -165,14 +208,14 @@ async def consumer(queue, sid, source_lang, target_lang):
                         context.append(transcript)
                     else:
                         logger.error("Translation returned empty result")
-                        await sio.emit('error', {'message': "Translation failed - empty result"}, room=sid)
+                        sio.emit('error', {'message': "Translation failed - empty result"}, room=sid)
                 except Exception as e:
                     logger.error(f"Translation error: {e}")
-                    await sio.emit('error', {'message': f"Translation error: {str(e)}"}, room=sid)
+                    sio.emit('error', {'message': f"Translation error: {str(e)}"}, room=sid)
             elif is_final:
                 # If source and target languages are the same, just emit the original text
                 logger.info(f"No translation needed (same languages) - Text: {transcript}")
-                await sio.emit('translation', {
+                sio.emit('translation', {
                     'original': transcript,
                     'translated': transcript,
                     'source_lang': source_lang,
@@ -182,7 +225,7 @@ async def consumer(queue, sid, source_lang, target_lang):
                     
         except Exception as e:
             logger.error(f"Error in consumer: {e}")
-            await sio.emit('error', {'message': f"Processing error: {str(e)}"}, room=sid)
+            sio.emit('error', {'message': f"Processing error: {str(e)}"}, room=sid)
             break
 
 async def sender(ws, stream):
@@ -287,7 +330,8 @@ def start_listening(data=None):
             loop.run_until_complete(handle_listening(sid, source_lang, target_lang))
         except Exception as e:
             logger.error(f"Error in async handler: {str(e)}")
-            loop.run_until_complete(sio.emit('error', {'message': str(e)}, room=sid))
+            # Use emit directly instead of awaiting it
+            sio.emit('error', {'message': str(e)}, room=sid)
         finally:
             loop.close()
     
@@ -303,15 +347,25 @@ async def handle_listening(sid, source_lang, target_lang):
         
         # Start the consumer task to process transcripts and translations
         consumer_task = asyncio.create_task(consumer(queue, sid, source_lang, target_lang))
-        listen_tasks[sid] = [consumer_task]
+        if sid not in listen_tasks:
+            listen_tasks[sid] = {'tasks': []}
+        listen_tasks[sid]['tasks'].append(consumer_task)
         
         # Initialize the microphone stream
-        async with MicrophoneStream() as stream:
+        try:
+            stream = MicrophoneStream()
+            await stream.__aenter__()
+        except Exception as e:
+            logger.error(f"Failed to initialize microphone stream: {str(e)}")
+            sio.emit('error', {'message': "Failed to initialize microphone. Please check your audio settings."}, room=sid)
+            return
+
+        try:
             # Create a WebSocket connection to Deepgram for speech recognition
             deepgram_api_key = os.getenv("DEEPGRAM_API_KEY")
             if not deepgram_api_key:
                 logger.error("Deepgram API key not found")
-                await sio.emit('error', {'message': "Speech recognition service not configured"}, room=sid)
+                sio.emit('error', {'message': "Speech recognition service not configured"}, room=sid)
                 return
                 
             # Construct the Deepgram WebSocket URL
@@ -325,6 +379,9 @@ async def handle_listening(sid, source_lang, target_lang):
             try:
                 # Connect to Deepgram WebSocket
                 async with websockets.connect(deepgram_url, extra_headers=headers) as ws:
+                    if not ws:
+                        raise ConnectionError("Failed to establish WebSocket connection")
+                        
                     logger.info(f"Connected to Deepgram WebSocket for {sid}")
                     
                     # Start sender and receiver tasks
@@ -332,7 +389,7 @@ async def handle_listening(sid, source_lang, target_lang):
                     receiver_task = asyncio.create_task(receiver(ws, queue))
                     
                     # Add tasks to the list for this session
-                    listen_tasks[sid].extend([sender_task, receiver_task])
+                    listen_tasks[sid]['tasks'].extend([sender_task, receiver_task])
                     
                     # Wait for any task to complete (which would indicate an error or completion)
                     done, pending = await asyncio.wait(
@@ -343,6 +400,10 @@ async def handle_listening(sid, source_lang, target_lang):
                     # Cancel any pending tasks
                     for task in pending:
                         task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
                         
                     # Check if any task completed with an exception
                     for task in done:
@@ -350,21 +411,31 @@ async def handle_listening(sid, source_lang, target_lang):
                             await task
                         except Exception as e:
                             logger.error(f"Task completed with error: {str(e)}")
+                            sio.emit('error', {'message': f"Processing error: {str(e)}"}, room=sid)
                             
+            except websockets.exceptions.WebSocketException as e:
+                logger.error(f"WebSocket connection error: {str(e)}")
+                sio.emit('error', {'message': "Failed to connect to speech recognition service"}, room=sid)
             except Exception as e:
-                logger.error(f"Error with Deepgram WebSocket: {str(e)}")
-                await sio.emit('error', {'message': f"Speech recognition error: {str(e)}"}, room=sid)
+                logger.error(f"Unexpected error in WebSocket handling: {str(e)}")
+                sio.emit('error', {'message': "An unexpected error occurred"}, room=sid)
+                
+        finally:
+            # Clean up the stream
+            try:
+                await stream.__aexit__(None, None, None)
+            except Exception as e:
+                logger.error(f"Error closing stream: {str(e)}")
                 
     except Exception as e:
-        logger.error(f"Error starting listening session for {sid}: {str(e)}")
-        await sio.emit('error', {'message': str(e)}, room=sid)
+        logger.error(f"Error in handle_listening: {str(e)}")
+        sio.emit('error', {'message': f"Error: {str(e)}"}, room=sid)
     finally:
-        # Clean up tasks if they exist
+        # Clean up tasks
         if sid in listen_tasks:
-            for task in listen_tasks[sid]:
-                if isinstance(task, asyncio.Task):
-                    if not task.done():
-                        task.cancel()
+            for task in listen_tasks[sid]['tasks']:
+                if not task.done():
+                    task.cancel()
             del listen_tasks[sid]
 
 @sio.on('stop_stream')
@@ -373,7 +444,7 @@ def stop_listening():
     logger.info(f"Stopping listening session for {sid}")
     
     if sid in listen_tasks:
-        for task in listen_tasks[sid]:
+        for task in listen_tasks[sid]['tasks']:
             if isinstance(task, asyncio.Task):
                 if not task.done():
                     task.cancel()

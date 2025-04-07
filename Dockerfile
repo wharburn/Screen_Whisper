@@ -14,18 +14,18 @@ RUN apt-get update && apt-get install -y \
     alsa-utils \
     && rm -rf /var/lib/apt/lists/*
 
-# Create ALSA configuration
+# Create ALSA configuration for Docker environment
 RUN mkdir -p /etc/alsa && \
     echo "pcm.!default { type null }" > /etc/asound.conf && \
     echo "ctl.!default { type null }" >> /etc/asound.conf && \
-    echo "defaults.pcm.card 0" >> /etc/asound.conf && \
-    echo "defaults.ctl.card 0" >> /etc/asound.conf
+    echo "defaults.pcm.device null" >> /etc/asound.conf && \
+    echo "defaults.ctl.device null" >> /etc/asound.conf
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-ENV ALSA_CARD=Generic
-ENV ALSA_DEVICE=hw:0,0
+ENV ALSA_CARD=null
+ENV ALSA_DEVICE=null
 
 # Set working directory
 WORKDIR /app
