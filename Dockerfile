@@ -22,9 +22,11 @@ WORKDIR /app
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 
-# Install Python dependencies with specific PyAudio version
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir PyAudio==0.2.11
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install PyAudio using pip with specific options
+RUN pip install --no-cache-dir --global-option='build_ext' --global-option='-I/usr/include' PyAudio==0.2.11
 
 # Copy the rest of the application
 COPY . .

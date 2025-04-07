@@ -2,5 +2,4 @@ aiohttp==3.9.3
 python-socketio==5.11.1
 python-dotenv==1.0.1
 websockets==12.0
-PyAudio==0.2.13
 gunicorn==21.2.0
