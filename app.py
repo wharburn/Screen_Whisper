@@ -35,83 +35,61 @@ class MicrophoneStream:
     def __init__(self, rate=RATE, chunk=CHUNK):
         self._rate = rate
         self._chunk = chunk
-        self.loop = asyncio.get_event_loop()
-        
-        # Create a thread-safe buffer of audio data
-        self._buff = asyncio.Queue()
-        self.closed = True
-        self._audio_interface = None
-        self._audio_stream = None
+        self._audio_interface = pyaudio.PyAudio()
+        self._stream = None
 
-    async def __aenter__(self):
+    def __aenter__(self):
         try:
-            self._audio_interface = pyaudio.PyAudio()
-            
-            # Open the audio stream
-            self._audio_stream = self._audio_interface.open(
+            self._stream = self._audio_interface.open(
                 format=pyaudio.paInt16,
                 channels=1,
                 rate=self._rate,
                 input=True,
                 frames_per_buffer=self._chunk,
                 stream_callback=self._fill_buffer,
+                input_device_index=None  # Let PyAudio choose the default device
             )
-            self.closed = False
-            self._audio_stream.start_stream()
+            self._audio_buffer = asyncio.Queue()
+            self._stream.start_stream()
             return self
         except Exception as e:
+            logger.error(f"Error initializing audio stream: {str(e)}")
+            if self._stream:
+                self._stream.close()
             if self._audio_interface:
                 self._audio_interface.terminate()
             raise RuntimeError(f"Failed to initialize audio stream: {str(e)}")
 
-    async def __aexit__(self, *args):
-        """Closes the stream, regardless of whether the connection was lost or not."""
-        if self._audio_stream:
-            self._audio_stream.stop_stream()
-            self._audio_stream.close()
-        self.closed = True
-        # Signal the generator to terminate
-        await self._buff.put(None)
+    def __aexit__(self, type, value, traceback):
+        if self._stream:
+            self._stream.stop_stream()
+            self._stream.close()
         if self._audio_interface:
             self._audio_interface.terminate()
 
-    def _fill_buffer(self, in_data, *_):
-        """Continuously collect data from the audio stream, into the buffer."""
-        if not self.closed:
-            self.loop.call_soon_threadsafe(self._buff.put_nowait, in_data)
+    def _fill_buffer(self, in_data, frame_count, time_info, status_flags):
+        """Continuously collect data from the audio stream into the buffer."""
+        try:
+            self._audio_buffer.put_nowait(in_data)
+        except asyncio.QueueFull:
+            logger.warning("Audio buffer is full, dropping oldest chunk")
+            try:
+                self._audio_buffer.get_nowait()  # Remove oldest chunk
+                self._audio_buffer.put_nowait(in_data)  # Add new chunk
+            except (asyncio.QueueEmpty, asyncio.QueueFull):
+                pass
         return (in_data, pyaudio.paContinue)
 
     async def generator(self):
-        """Generates audio chunks from the stream of audio data."""
-        while not self.closed:
-            # Use a blocking get() to ensure there's at least one chunk of data
-            chunk = await self._buff.get()
-            if chunk is None:
-                return
-            data = [chunk]
-
-            # Now consume whatever other data's still buffered
-            while True:
-                try:
-                    chunk = self._buff.get_nowait()
-                    if chunk is None:
-                        return
-                    data.append(chunk)
-                except asyncio.QueueEmpty:
-                    break
-
-            yield b"".join(data)
-            
-    async def read(self):
-        """Read a single chunk of audio data."""
-        try:
-            chunk = await self._buff.get()
-            if chunk is None:
-                return None
-            return chunk
-        except Exception as e:
-            logger.error(f"Error reading audio data: {str(e)}")
-            raise
+        """Generates audio chunks from the stream."""
+        while True:
+            try:
+                chunk = await self._audio_buffer.get()
+                if chunk:
+                    yield chunk
+            except Exception as e:
+                logger.error(f"Error in audio generator: {str(e)}")
+                break
 
 # Initialize Flask and SocketIO
 app = Flask(__name__)
@@ -213,7 +191,7 @@ async def sender(ws, stream):
         logger.info("Starting sender task")
         chunk_count = 0
         async for chunk in stream.generator():
-            if stream.closed:
+            if stream._stream.is_stopped():
                 logger.info("Stream closed, stopping sender")
                 break
             chunk_count += 1

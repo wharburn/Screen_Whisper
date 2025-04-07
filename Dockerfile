@@ -11,16 +11,21 @@ RUN apt-get update && apt-get install -y \
     gcc \
     make \
     pkg-config \
+    alsa-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Create ALSA configuration
 RUN mkdir -p /etc/alsa && \
     echo "pcm.!default { type null }" > /etc/asound.conf && \
-    echo "ctl.!default { type null }" >> /etc/asound.conf
+    echo "ctl.!default { type null }" >> /etc/asound.conf && \
+    echo "defaults.pcm.card 0" >> /etc/asound.conf && \
+    echo "defaults.ctl.card 0" >> /etc/asound.conf
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+ENV ALSA_CARD=Generic
+ENV ALSA_DEVICE=hw:0,0
 
 # Set working directory
 WORKDIR /app
