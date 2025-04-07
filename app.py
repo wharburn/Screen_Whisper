@@ -249,7 +249,7 @@ class MicrophoneStream:
 # Initialize Flask and SocketIO
 app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key')
-sio = SocketIO(app, async_mode='eventlet', cors_allowed_origins="*")
+sio = SocketIO(app, async_mode='eventlet', cors_allowed_origins="*", logger=True, engineio_logger=True)
 
 # Store active streams and tasks
 streams = {}

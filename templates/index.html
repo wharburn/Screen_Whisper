@@ -116,9 +116,11 @@
 
     <script>
         // Socket.io setup
-        const socket = io('/', {
-            transports: ['websocket'],
-            upgrade: false
+        const socket = io({
+            transports: ['websocket', 'polling'],
+            reconnection: true,
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000
         });
         let isListening = false;
 
@@ -260,6 +262,7 @@
         });
 
         socket.on('connect_error', (error) => {
+            console.error('Connection error:', error);
             showStatus(`Connection error: ${error.message}`, 'error');
         });
     </script>
