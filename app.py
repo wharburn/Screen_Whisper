@@ -11,6 +11,11 @@ from collections import deque, Counter
 import logging
 import time
 from translate import translate_text_deepl, deepl_language
+from flask import Flask, render_template
+from flask_socketio import SocketIO
+import wave
+import speech_recognition as sr
+from googletrans import Translator
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -98,10 +103,43 @@ class MicrophoneStream:
 
             yield b"".join(data)
 
+class AudioStream:
+    def __init__(self):
+        self._audio_interface = pyaudio.PyAudio()
+        self._stream = None
+
+    async def __aenter__(self):
+        try:
+            self._stream = self._audio_interface.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=RATE,
+                input=True,
+                frames_per_buffer=CHUNK
+            )
+            return self
+        except Exception as e:
+            logger.error(f"Failed to initialize audio stream: {str(e)}")
+            raise RuntimeError(f"Failed to initialize audio stream: {str(e)}")
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self._stream:
+            self._stream.stop_stream()
+            self._stream.close()
+        self._audio_interface.terminate()
+
+    async def read(self):
+        try:
+            data = self._stream.read(CHUNK, exception_on_overflow=False)
+            return data
+        except Exception as e:
+            logger.error(f"Error reading audio data: {str(e)}")
+            raise
+
 # Create a new aiohttp web application
-app = web.Application()
-sio = socketio.AsyncServer(async_mode='aiohttp', cors_allowed_origins='*')
-sio.attach(app)
+app = Flask(__name__)
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key')
+sio = SocketIO(app, async_mode='eventlet', cors_allowed_origins="*")
 
 # Store active streams and tasks
 streams = {}
@@ -224,127 +262,42 @@ async def receiver(ws, queue):
     except Exception as e:
         logger.error(f"Error in receiver: {e}")
 
-# Routes
-async def index(request):
-    """Serve the index page."""
-    with open('templates/index.html') as f:
-        return web.Response(text=f.read(), content_type='text/html')
+@app.route('/')
+def index():
+    return render_template('index.html')
 
-# Register routes
-app.router.add_get('/', index)
-app.router.add_static('/static', 'static')  # Add static file serving
+@sio.on('connect')
+async def handle_connect():
+    logger.info(f"Client connected: {request.sid}")
 
-@sio.event
-async def connect(sid, environ):
-    """Handle client connection."""
-    logger.info(f'Client connected: {sid}')
-
-@sio.event
-async def disconnect(sid):
-    """Handle client disconnection."""
-    logger.info(f'Client disconnected: {sid}')
-    if sid in listen_tasks:
-        for task in listen_tasks[sid]:
+@sio.on('disconnect')
+async def handle_disconnect():
+    logger.info(f"Client disconnected: {request.sid}")
+    if request.sid in listen_tasks:
+        for task in listen_tasks[request.sid]:
             task.cancel()
-        del listen_tasks[sid]
+        del listen_tasks[request.sid]
 
-@sio.event
-async def start_listening(sid, data):
-    """Start the listening session for a client."""
-    if sid in listen_tasks and not listen_tasks[sid].done():
-        logger.warning(f"Client {sid} already has an active listening session")
-        return
-
+@sio.on('start_stream')
+async def start_listening(sid):
     try:
-        # Check for Deepgram API key
-        key = os.getenv('DEEPGRAM_API_KEY')
-        if not key:
-            raise RuntimeError("DEEPGRAM_API_KEY not found in environment")
-        
-        # Set up Deepgram connection parameters
-        params = {
-            'diarize': 'true',
-            'punctuate': 'true',
-            'filler_words': 'true',
-            'interim_results': 'true',
-            'language': data.get('source_lang', 'en-US'),
-            'encoding': 'linear16',
-            'sample_rate': str(RATE),
-        }
-        
-        # Select model based on language
-        if params['language'].split("-")[0] in ("en"):
-            params["model"] = "nova-3"
-        elif params['language'].split("-")[0] in (
-            "bg", "ca", "cs", "da", "de", "el", "es", "et", "fi", "fr", "hi", "hu",
-            "id", "it", "ja", "ko", "lt", "lv", "ms", "nl", "no", "pl", "pt", "ro",
-            "ru", "sk", "sv", "th", "tr", "uk", "vi", "zh"
-        ):
-            params["model"] = "nova-2"
-        else:
-            params["model"] = "enhanced"
-        
-        query_string = urlencode(params)
-        deepgram_url = f"wss://api.deepgram.com/v1/listen?{query_string}"
-        
-        # Create queue for communication between tasks
-        queue = asyncio.Queue(maxsize=1)
-        
-        # Start the microphone stream
-        logger.info(f"Initializing microphone for client {sid}")
-        try:
-            stream = MicrophoneStream()
-            streams[sid] = stream
-            async with stream:
-                logger.info(f"Microphone initialized successfully for client {sid}")
-                
-                # Connect to Deepgram
-                logger.info(f"Connecting to Deepgram for client {sid}")
-                async with websockets.connect(
-                    deepgram_url,
-                    extra_headers={"Authorization": f"Token {key}"}
-                ) as ws:
-                    logger.info(f"Connected to Deepgram for client {sid}")
-                    
-                    # Create tasks for the three main components
-                    consumer_task = asyncio.create_task(
-                        consumer(queue, sid, data.get('source_lang', 'auto'), data.get('target_lang', 'EN'))
-                    )
-                    sender_task = asyncio.create_task(sender(ws, stream))
-                    receiver_task = asyncio.create_task(receiver(ws, queue))
-                    
-                    # Store tasks
-                    listen_tasks[sid] = asyncio.gather(consumer_task, sender_task, receiver_task)
-                    
-                    try:
-                        await listen_tasks[sid]
-                    except asyncio.CancelledError:
-                        logger.info(f"Listening session cancelled for client {sid}")
-                    except Exception as e:
-                        logger.error(f"Error in listening session for {sid}: {e}")
-                        await sio.emit('error', {'message': f"Listening session error: {str(e)}"}, room=sid)
-                    finally:
-                        # Clean up
-                        if sid in streams:
-                            del streams[sid]
-                        if sid in listen_tasks:
-                            del listen_tasks[sid]
-        except Exception as e:
-            logger.error(f"Failed to initialize microphone for client {sid}: {e}")
-            await sio.emit('error', {'message': f"Microphone initialization failed: {str(e)}"}, room=sid)
-            if sid in streams:
-                del streams[sid]
-            return
-
+        logger.info(f"Starting listening session for {sid}")
+        async with AudioStream() as stream:
+            while True:
+                try:
+                    data = await stream.read()
+                    # Process audio data here
+                    await sio.emit('audio_data', {'data': data}, room=sid)
+                except Exception as e:
+                    logger.error(f"Error processing audio: {str(e)}")
+                    await sio.emit('error', {'message': str(e)}, room=sid)
+                    break
     except Exception as e:
-        logger.error(f"Error starting listening session for {sid}: {e}")
+        logger.error(f"Error starting listening session for {sid}: {str(e)}")
         await sio.emit('error', {'message': str(e)}, room=sid)
-        if sid in streams:
-            del streams[sid]
 
-@sio.event
+@sio.on('stop_stream')
 async def stop_listening(sid):
-    """Stop the listening session for a client."""
     logger.info(f"Stopping listening session for {sid}")
     if sid in listen_tasks:
         for task in listen_tasks[sid]:
@@ -353,4 +306,4 @@ async def stop_listening(sid):
 
 if __name__ == '__main__':
     logger.info("Starting application...")
-    web.run_app(app, host=HOST, port=PORT) 
+    sio.run(app, host=HOST, port=PORT, debug=True) 
