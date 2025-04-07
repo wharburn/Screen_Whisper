@@ -211,6 +211,7 @@
 
         // Handle real-time recognition updates
         socket.on('recognition', (data) => {
+            console.log('Received recognition:', data);
             if (data.is_final) {
                 currentRecognition.textContent = data.text;
             } else {
@@ -221,26 +222,36 @@
         // Handle translations with debug logging
         socket.on('translation', (data) => {
             console.log('Received translation:', data);
-            // Update current translation
-            currentTranslation.textContent = data.translated;
+            
+            // Update current translation immediately
+            if (data && data.translated) {
+                currentTranslation.textContent = data.translated;
+                console.log('Updated current translation to:', data.translated);
+            } else {
+                console.warn('Translation data is missing or invalid:', data);
+            }
 
             // Add to history
-            const historyItem = document.createElement('div');
-            historyItem.className = 'p-2 bg-gray-700 rounded shadow border border-gray-600';
-            historyItem.innerHTML = `
-                <div class="text-sm text-gray-400">${data.original}</div>
-                <div class="font-medium text-white">${data.translated}</div>
-            `;
-            translationHistory.insertBefore(historyItem, translationHistory.firstChild);
+            if (data && data.original && data.translated) {
+                const historyItem = document.createElement('div');
+                historyItem.className = 'p-2 bg-gray-700 rounded shadow border border-gray-600';
+                historyItem.innerHTML = `
+                    <div class="text-sm text-gray-400">${data.original}</div>
+                    <div class="font-medium text-white">${data.translated}</div>
+                `;
+                translationHistory.insertBefore(historyItem, translationHistory.firstChild);
+                console.log('Added translation to history');
 
-            // Limit history items
-            if (translationHistory.children.length > 10) {
-                translationHistory.removeChild(translationHistory.lastChild);
+                // Limit history items
+                if (translationHistory.children.length > 10) {
+                    translationHistory.removeChild(translationHistory.lastChild);
+                }
             }
         });
 
         // Handle errors
         socket.on('error', (data) => {
+            console.error('Received error:', data);
             showStatus(data.message, 'error');
             if (startButton.disabled) {
                 startButton.disabled = false;
