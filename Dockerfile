@@ -1,21 +1,22 @@
-FROM python:3.11-bullseye
+FROM ubuntu:22.04
 
-# Update package lists and install dependencies one at a time
+# Avoid prompts from apt
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install Python and system dependencies
 RUN apt-get update && \
-    apt-get install -y libportaudio2 && \
-    apt-get install -y libportaudiocore1 && \
-    apt-get install -y portaudio19-dev && \
-    apt-get install -y python3-dev && \
-    apt-get install -y gcc && \
-    apt-get install -y make && \
-    apt-get install -y pkg-config && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-# Create symbolic links for PortAudio headers
-RUN ln -s /usr/include/portaudio.h /usr/local/include/portaudio.h && \
-    ln -s /usr/include/pa_linux_alsa.h /usr/local/include/pa_linux_alsa.h && \
-    ln -s /usr/include/pa_unix_oss.h /usr/local/include/pa_unix_oss.h
+    apt-get install -y \
+    python3.11 \
+    python3-pip \
+    python3-dev \
+    libportaudio2 \
+    libportaudiocore1 \
+    portaudio19-dev \
+    gcc \
+    make \
+    pkg-config \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
@@ -24,10 +25,10 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt
 
 # Install PyAudio using pip with specific options
-RUN pip install --no-cache-dir --global-option='build_ext' --global-option='-I/usr/include' PyAudio==0.2.11
+RUN pip3 install --no-cache-dir --global-option='build_ext' --global-option='-I/usr/include' PyAudio==0.2.11
 
 # Copy the rest of the application
 COPY . .
