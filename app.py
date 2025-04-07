@@ -302,7 +302,14 @@ def start_listening(data=None):
     logger.info(f"Language preferences - Source: {source_lang}, Target: {target_lang}")
     
     # Create a background task to handle the async operations
-    sio.start_background_task(handle_listening, sid, source_lang, target_lang)
+    async def run_async():
+        try:
+            await handle_listening(sid, source_lang, target_lang)
+        except Exception as e:
+            logger.error(f"Error in async handler: {str(e)}")
+            await sio.emit('error', {'message': str(e)}, room=sid)
+    
+    sio.start_background_task(run_async)
     
     return True
 
