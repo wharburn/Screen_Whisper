@@ -3,258 +3,251 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Live Translator</title>
-    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-    <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
+    <title>Audio Translation App</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .card {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .language-selector {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        select {
+            padding: 8px;
+            border-radius: 4px;
+        }
+        .output {
+            min-height: 200px;
+            max-height: 400px;
+            overflow-y: auto;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .transcript, .translation {
+            margin-bottom: 10px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .transcript {
+            background-color: #e6f7ff;
+        }
+        .translation {
+            background-color: #f0fff0;
+        }
+        .status {
+            margin-top: 10px;
+            font-style: italic;
+            color: #666;
+        }
+        .error {
+            color: #d9534f;
+            margin-top: 10px;
+        }
+    </style>
 </head>
-<body class="bg-black min-h-screen text-white">
-    <div class="container mx-auto px-4 py-8">
-        <div class="max-w-2xl mx-auto bg-gray-900 rounded-lg shadow-xl p-6 border border-gray-800">
-            <!-- Header with Logo and Start Button -->
-            <div class="flex justify-between items-center mb-6">
-                <div class="w-48">
-                    <img src="/static/images/SWlogo.png" alt="ScreenWhisper Logo" class="h-12 w-auto">
+<body>
+    <div class="container">
+        <h1>Audio Translation App</h1>
+        
+        <div class="card">
+            <h2>Language Settings</h2>
+            <div class="language-selector">
+                <div>
+                    <label for="source-lang">Source Language:</label>
+                    <select id="source-lang">
+                        <option value="en">English</option>
+                        <option value="es">Spanish</option>
+                        <option value="fr">French</option>
+                        <option value="de">German</option>
+                        <option value="it">Italian</option>
+                        <option value="pt">Portuguese</option>
+                        <option value="nl">Dutch</option>
+                        <option value="pl">Polish</option>
+                        <option value="ru">Russian</option>
+                        <option value="ja">Japanese</option>
+                        <option value="ko">Korean</option>
+                        <option value="zh">Chinese</option>
+                    </select>
                 </div>
-                <button id="startButton" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition">
-                    Start Listening
-                </button>
-            </div>
-            
-            <!-- Language Selection -->
-            <div class="mb-6">
-                <div class="flex space-x-4">
-                    <div class="flex-1">
-                        <label class="block text-sm font-medium text-gray-300 mb-2">Source Language</label>
-                        <select id="sourceLanguage" class="w-full p-2 border rounded bg-gray-800 text-white border-gray-700">
-                            <option value="en-US">English (US)</option>
-                            <option value="es-ES">Spanish</option>
-                            <option value="fr-FR">French</option>
-                            <option value="de-DE">German</option>
-                            <option value="it-IT">Italian</option>
-                            <option value="ja-JP">Japanese</option>
-                            <option value="ko-KR">Korean</option>
-                            <option value="zh-CN">Chinese (Simplified)</option>
-                            <option value="ru-RU">Russian</option>
-                            <option value="pt-BR">Portuguese (Brazil)</option>
-                            <option value="nl-NL">Dutch</option>
-                            <option value="pl-PL">Polish</option>
-                            <option value="tr-TR">Turkish</option>
-                            <option value="uk-UA">Ukrainian</option>
-                            <option value="bg-BG">Bulgarian</option>
-                            <option value="cs-CZ">Czech</option>
-                            <option value="da-DK">Danish</option>
-                            <option value="el-GR">Greek</option>
-                            <option value="et-EE">Estonian</option>
-                            <option value="fi-FI">Finnish</option>
-                            <option value="hu-HU">Hungarian</option>
-                            <option value="id-ID">Indonesian</option>
-                            <option value="lt-LT">Lithuanian</option>
-                            <option value="lv-LV">Latvian</option>
-                            <option value="nb-NO">Norwegian</option>
-                            <option value="ro-RO">Romanian</option>
-                            <option value="sk-SK">Slovak</option>
-                            <option value="sl-SI">Slovenian</option>
-                            <option value="sv-SE">Swedish</option>
-                        </select>
-                    </div>
-                    <div class="flex-1">
-                        <label class="block text-sm font-medium text-gray-300 mb-2">Target Language</label>
-                        <select id="targetLanguage" class="w-full p-2 border rounded bg-gray-800 text-white border-gray-700">
-                            <option value="EN">English</option>
-                            <option value="ES">Spanish</option>
-                            <option value="FR">French</option>
-                            <option value="DE">German</option>
-                            <option value="IT">Italian</option>
-                            <option value="JA">Japanese</option>
-                            <option value="KO">Korean</option>
-                            <option value="ZH">Chinese</option>
-                            <option value="RU">Russian</option>
-                            <option value="PT">Portuguese</option>
-                            <option value="NL">Dutch</option>
-                            <option value="PL">Polish</option>
-                            <option value="TR">Turkish</option>
-                            <option value="UK">Ukrainian</option>
-                            <option value="BG">Bulgarian</option>
-                            <option value="CS">Czech</option>
-                            <option value="DA">Danish</option>
-                            <option value="EL">Greek</option>
-                            <option value="ET">Estonian</option>
-                            <option value="FI">Finnish</option>
-                            <option value="HU">Hungarian</option>
-                            <option value="ID">Indonesian</option>
-                            <option value="LT">Lithuanian</option>
-                            <option value="LV">Latvian</option>
-                            <option value="NB">Norwegian</option>
-                            <option value="RO">Romanian</option>
-                            <option value="SK">Slovak</option>
-                            <option value="SL">Slovenian</option>
-                            <option value="SV">Swedish</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Status and Error Messages -->
-            <div id="statusMessage" class="mb-6 p-4 rounded hidden"></div>
-
-            <!-- Translation Display -->
-            <div class="space-y-4">
-                <div class="p-4 bg-gray-800 rounded border border-gray-700">
-                    <h3 class="font-medium mb-2 text-gray-300">Translation (<span id="targetLanguageDisplay"></span>)</h3>
-                    <div id="currentTranslation" class="text-lg font-medium text-white"></div>
-                    <h3 class="font-medium mt-4 mb-2 text-gray-300">Source (<span id="sourceLanguageDisplay"></span>)</h3>
-                    <div id="currentRecognition" class="text-gray-400 italic"></div>
-                </div>
-                
-                <div class="p-4 bg-gray-800 rounded border border-gray-700">
-                    <h3 class="font-medium mb-2 text-gray-300">Translation History</h3>
-                    <div id="translationHistory" class="space-y-2"></div>
+                <div>
+                    <label for="target-lang">Target Language:</label>
+                    <select id="target-lang">
+                        <option value="es">Spanish</option>
+                        <option value="en">English</option>
+                        <option value="fr">French</option>
+                        <option value="de">German</option>
+                        <option value="it">Italian</option>
+                        <option value="pt">Portuguese</option>
+                        <option value="nl">Dutch</option>
+                        <option value="pl">Polish</option>
+                        <option value="ru">Russian</option>
+                        <option value="ja">Japanese</option>
+                        <option value="ko">Korean</option>
+                        <option value="zh">Chinese</option>
+                    </select>
                 </div>
             </div>
         </div>
+        
+        <div class="card">
+            <h2>Audio Controls</h2>
+            <div class="controls">
+                <button id="start-btn">Start Listening</button>
+                <button id="stop-btn" disabled>Stop Listening</button>
+            </div>
+            <div class="status" id="status">Ready to start</div>
+            <div class="error" id="error"></div>
+        </div>
+        
+        <div class="card">
+            <h2>Output</h2>
+            <div class="output" id="output"></div>
+        </div>
     </div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script>
-        // Socket.io setup
-        const socket = io();
-        let isListening = false;
-
-        // UI elements
-        const startButton = document.getElementById('startButton');
-        const sourceSelect = document.getElementById('sourceLanguage');
-        const targetSelect = document.getElementById('targetLanguage');
-        const currentRecognition = document.getElementById('currentRecognition');
-        const currentTranslation = document.getElementById('currentTranslation');
-        const translationHistory = document.getElementById('translationHistory');
-        const statusMessage = document.getElementById('statusMessage');
-        const sourceLanguageDisplay = document.getElementById('sourceLanguageDisplay');
-        const targetLanguageDisplay = document.getElementById('targetLanguageDisplay');
-
-        // Update language displays
-        function updateLanguageDisplays() {
-            sourceLanguageDisplay.textContent = sourceSelect.options[sourceSelect.selectedIndex].text;
-            targetLanguageDisplay.textContent = targetSelect.options[targetSelect.selectedIndex].text;
-        }
-
-        sourceSelect.addEventListener('change', updateLanguageDisplays);
-        targetSelect.addEventListener('change', updateLanguageDisplays);
-        updateLanguageDisplays();
-
-        function showStatus(message, type = 'info') {
-            statusMessage.textContent = message;
-            statusMessage.className = `mb-6 p-4 rounded ${type === 'error' ? 'bg-red-900 text-red-200' : 'bg-blue-900 text-blue-200'}`;
-            statusMessage.classList.remove('hidden');
+        document.addEventListener('DOMContentLoaded', function() {
+            const socket = io();
+            const startBtn = document.getElementById('start-btn');
+            const stopBtn = document.getElementById('stop-btn');
+            const statusEl = document.getElementById('status');
+            const errorEl = document.getElementById('error');
+            const outputEl = document.getElementById('output');
+            const sourceLangSelect = document.getElementById('source-lang');
+            const targetLangSelect = document.getElementById('target-lang');
             
-            if (type === 'info') {
-                setTimeout(() => {
-                    if (statusMessage.textContent === message) {
-                        hideStatus();
-                    }
-                }, 5000);
-            }
-        }
-
-        function hideStatus() {
-            statusMessage.classList.add('hidden');
-        }
-
-        // Handle start/stop button click
-        startButton.addEventListener('click', async () => {
-            if (!isListening) {
-                try {
-                    startButton.disabled = true;
-                    startButton.textContent = 'Initializing...';
-                    showStatus('Initializing microphone...', 'info');
-                    
-                    // Request microphone permission
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    stream.getTracks().forEach(track => track.stop()); // Stop the stream after permission is granted
-                    
-                    showStatus('Connecting to translation service...', 'info');
-                    
-                    // Start listening with selected languages
-                    socket.emit('start_stream', {
-                        source_lang: sourceSelect.value,
-                        target_lang: targetSelect.value
-                    });
-                    
-                    isListening = true;
-                    startButton.textContent = 'Stop Listening';
-                    startButton.disabled = false;
-                    showStatus('Listening started', 'info');
-                } catch (error) {
-                    console.error('Error starting microphone:', error);
-                    let errorMessage = 'Error: ';
-                    if (error.name === 'NotAllowedError') {
-                        errorMessage += 'Microphone access denied. Please allow microphone access and try again.';
-                    } else if (error.name === 'NotFoundError') {
-                        errorMessage += 'No microphone found. Please connect a microphone and try again.';
-                    } else {
-                        errorMessage += error.message;
-                    }
-                    showStatus(errorMessage, 'error');
-                    startButton.disabled = false;
-                    startButton.textContent = 'Start Listening';
+            let isListening = false;
+            
+            // Socket event handlers
+            socket.on('connect', function() {
+                statusEl.textContent = 'Connected to server';
+                errorEl.textContent = '';
+            });
+            
+            socket.on('disconnect', function() {
+                statusEl.textContent = 'Disconnected from server';
+                if (isListening) {
+                    stopListening();
                 }
-            } else {
-                socket.emit('stop_stream');
+            });
+            
+            socket.on('connected', function(data) {
+                console.log('Connected to server:', data);
+            });
+            
+            socket.on('recognition', function(data) {
+                console.log('Recognition:', data);
+                
+                const transcriptDiv = document.createElement('div');
+                transcriptDiv.className = 'transcript';
+                
+                if (data.is_final) {
+                    transcriptDiv.textContent = `Final: ${data.text}`;
+                } else {
+                    transcriptDiv.textContent = `Interim: ${data.text}`;
+                }
+                
+                outputEl.appendChild(transcriptDiv);
+                outputEl.scrollTop = outputEl.scrollHeight;
+            });
+            
+            socket.on('translation', function(data) {
+                console.log('Translation:', data);
+                
+                const translationDiv = document.createElement('div');
+                translationDiv.className = 'translation';
+                translationDiv.textContent = `Translation (${data.source_lang} → ${data.target_lang}): ${data.text}`;
+                
+                outputEl.appendChild(translationDiv);
+                outputEl.scrollTop = outputEl.scrollHeight;
+            });
+            
+            socket.on('error', function(data) {
+                console.error('Error:', data);
+                errorEl.textContent = data.message || 'An error occurred';
+            });
+            
+            // Button event handlers
+            startBtn.addEventListener('click', function() {
+                startListening();
+            });
+            
+            stopBtn.addEventListener('click', function() {
+                stopListening();
+            });
+            
+            function startListening() {
+                const sourceLang = sourceLangSelect.value;
+                const targetLang = targetLangSelect.value;
+                
+                // Clear previous output
+                outputEl.innerHTML = '';
+                errorEl.textContent = '';
+                
+                // Update UI
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                statusEl.textContent = 'Listening...';
+                
+                // Start listening
+                socket.emit('start_listening', {
+                    source_lang: sourceLang,
+                    target_lang: targetLang
+                });
+                
+                isListening = true;
+            }
+            
+            function stopListening() {
+                // Update UI
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                statusEl.textContent = 'Stopped listening';
+                
+                // Stop listening
+                socket.emit('stop_listening');
+                
                 isListening = false;
-                startButton.textContent = 'Start Listening';
-                showStatus('Listening stopped', 'info');
             }
-        });
-
-        // Handle real-time recognition updates
-        socket.on('recognition', (data) => {
-            if (data.is_final) {
-                currentRecognition.textContent = data.text;
-            } else {
-                currentRecognition.textContent = data.text + '...';
-            }
-        });
-
-        // Handle translations
-        socket.on('translation', (data) => {
-            // Update current translation
-            currentTranslation.textContent = data.translated;
-
-            // Add to history
-            const historyItem = document.createElement('div');
-            historyItem.className = 'p-2 bg-gray-700 rounded shadow border border-gray-600';
-            historyItem.innerHTML = `
-                <div class="text-sm text-gray-400">${data.original}</div>
-                <div class="font-medium text-white">${data.translated}</div>
-            `;
-            translationHistory.insertBefore(historyItem, translationHistory.firstChild);
-
-            // Limit history items
-            if (translationHistory.children.length > 10) {
-                translationHistory.removeChild(translationHistory.lastChild);
-            }
-        });
-
-        // Handle errors
-        socket.on('error', (data) => {
-            showStatus(data.message, 'error');
-            if (startButton.disabled) {
-                startButton.disabled = false;
-                startButton.textContent = 'Start Listening';
-            }
-        });
-
-        // Handle connection events
-        socket.on('connect', () => {
-            showStatus('Connected to server', 'info');
-        });
-
-        socket.on('disconnect', () => {
-            showStatus('Disconnected from server', 'error');
-            isListening = false;
-            startButton.textContent = 'Start Listening';
-        });
-
-        socket.on('connect_error', (error) => {
-            showStatus(`Connection error: ${error.message}`, 'error');
         });
     </script>
 </body>
