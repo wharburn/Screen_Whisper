@@ -138,7 +138,7 @@ async def consumer(queue, sid, source_lang, target_lang):
             logger.info(f"Received transcript for {sid}: '{transcript}' (final: {is_final})")
                 
             # Emit the transcript immediately
-            await sio.emit('recognition', {
+            sio.emit('recognition', {
                 'text': transcript,
                 'is_final': is_final
             }, room=sid)
@@ -156,7 +156,7 @@ async def consumer(queue, sid, source_lang, target_lang):
                     
                     if translation:
                         logger.info(f"Translation successful - Original: {transcript}, Translated: {translation}")
-                        await sio.emit('translation', {
+                        sio.emit('translation', {
                             'original': transcript,
                             'translated': translation,
                             'source_lang': source_lang,
@@ -165,14 +165,14 @@ async def consumer(queue, sid, source_lang, target_lang):
                         context.append(transcript)
                     else:
                         logger.error("Translation returned empty result")
-                        await sio.emit('error', {'message': "Translation failed - empty result"}, room=sid)
+                        sio.emit('error', {'message': "Translation failed - empty result"}, room=sid)
                 except Exception as e:
                     logger.error(f"Translation error: {e}")
-                    await sio.emit('error', {'message': f"Translation error: {str(e)}"}, room=sid)
+                    sio.emit('error', {'message': f"Translation error: {str(e)}"}, room=sid)
             elif is_final:
                 # If source and target languages are the same, just emit the original text
                 logger.info(f"No translation needed (same languages) - Text: {transcript}")
-                await sio.emit('translation', {
+                sio.emit('translation', {
                     'original': transcript,
                     'translated': transcript,
                     'source_lang': source_lang,
@@ -182,7 +182,7 @@ async def consumer(queue, sid, source_lang, target_lang):
                     
         except Exception as e:
             logger.error(f"Error in consumer: {e}")
-            await sio.emit('error', {'message': f"Processing error: {str(e)}"}, room=sid)
+            sio.emit('error', {'message': f"Processing error: {str(e)}"}, room=sid)
             break
 
 async def sender(ws, stream):
@@ -287,7 +287,8 @@ def start_listening(data=None):
             loop.run_until_complete(handle_listening(sid, source_lang, target_lang))
         except Exception as e:
             logger.error(f"Error in async handler: {str(e)}")
-            loop.run_until_complete(sio.emit('error', {'message': str(e)}, room=sid))
+            # Use sio.emit directly instead of awaiting it
+            sio.emit('error', {'message': str(e)}, room=sid)
         finally:
             loop.close()
     
@@ -311,7 +312,8 @@ async def handle_listening(sid, source_lang, target_lang):
             deepgram_api_key = os.getenv("DEEPGRAM_API_KEY")
             if not deepgram_api_key:
                 logger.error("Deepgram API key not found")
-                await sio.emit('error', {'message': "Speech recognition service not configured"}, room=sid)
+                # Use sio.emit directly instead of awaiting it
+                sio.emit('error', {'message': "Speech recognition service not configured"}, room=sid)
                 return
                 
             # Construct the Deepgram WebSocket URL
@@ -353,11 +355,13 @@ async def handle_listening(sid, source_lang, target_lang):
                             
             except Exception as e:
                 logger.error(f"Error with Deepgram WebSocket: {str(e)}")
-                await sio.emit('error', {'message': f"Speech recognition error: {str(e)}"}, room=sid)
+                # Use sio.emit directly instead of awaiting it
+                sio.emit('error', {'message': f"Speech recognition error: {str(e)}"}, room=sid)
                 
     except Exception as e:
         logger.error(f"Error starting listening session for {sid}: {str(e)}")
-        await sio.emit('error', {'message': str(e)}, room=sid)
+        # Use sio.emit directly instead of awaiting it
+        sio.emit('error', {'message': str(e)}, room=sid)
     finally:
         # Clean up tasks if they exist
         if sid in listen_tasks:
