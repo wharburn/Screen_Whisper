@@ -282,21 +282,29 @@ def handle_disconnect():
     logger.info(f"Client disconnected: {request.sid}")
     if request.sid in listen_tasks:
         for task in listen_tasks[request.sid]:
-            task.cancel()
+            if not task.done():
+                task.cancel()
         del listen_tasks[request.sid]
 
 @sio.on('start_stream')
-async def start_listening(data=None):
+def start_listening(data=None):
     sid = request.sid
+    logger.info(f"Starting listening session for {sid}")
+    
+    # Get language preferences from the client
+    source_lang = data.get('source_lang', 'en-US') if data else 'en-US'
+    target_lang = data.get('target_lang', 'EN') if data else 'EN'
+    
+    logger.info(f"Language preferences - Source: {source_lang}, Target: {target_lang}")
+    
+    # Create a background task to handle the async operations
+    sio.start_background_task(handle_listening, sid, source_lang, target_lang)
+    
+    return True
+
+async def handle_listening(sid, source_lang, target_lang):
+    """Handle the async listening operations in a background task."""
     try:
-        logger.info(f"Starting listening session for {sid}")
-        
-        # Get language preferences from the client
-        source_lang = data.get('source_lang', 'en-US') if data else 'en-US'
-        target_lang = data.get('target_lang', 'EN') if data else 'EN'
-        
-        logger.info(f"Language preferences - Source: {source_lang}, Target: {target_lang}")
-        
         # Create a queue for processing transcripts
         queue = asyncio.Queue(maxsize=10)
         
@@ -366,7 +374,7 @@ async def start_listening(data=None):
             del listen_tasks[sid]
 
 @sio.on('stop_stream')
-async def stop_listening():
+def stop_listening():
     sid = request.sid
     logger.info(f"Stopping listening session for {sid}")
     if sid in listen_tasks:
@@ -374,7 +382,7 @@ async def stop_listening():
             if not task.done():
                 task.cancel()
         del listen_tasks[sid]
-        await sio.emit('status', {'message': 'Listening stopped'}, room=sid)
+        sio.emit('status', {'message': 'Listening stopped'}, room=sid)
 
 if __name__ == '__main__':
     logger.info("Starting application...")
