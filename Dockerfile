@@ -28,7 +28,6 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV ALSA_CARD=0
 ENV ALSA_DEVICE=0
-ENV PYTHONPATH=/app
 
 # Set working directory
 WORKDIR /app
@@ -40,13 +39,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 RUN pip install --no-cache-dir PyAudio==0.2.11
 RUN pip install --no-cache-dir werkzeug==2.0.3
-RUN pip install --no-cache-dir numpy scipy
 
 # Copy application files
 COPY . .
-
-# Generate fallback audio file
-RUN python generate_hello_world.py
 
 # Expose port
 EXPOSE 8000
