@@ -35,5 +35,9 @@ COPY . .
 # Expose the port the app runs on
 EXPOSE 8000
 
+# Set environment variables
+ENV PORT=8000
+ENV HOST=0.0.0.0
+
 # Command to run the application
 CMD ["python3", "app.py"] 
