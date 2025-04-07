@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11-bullseye
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -22,8 +22,9 @@ WORKDIR /app
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies with specific PyAudio version
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir PyAudio==0.2.11
 
 # Copy the rest of the application
 COPY . .
