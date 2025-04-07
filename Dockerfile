@@ -1,14 +1,16 @@
 FROM python:3.11-bullseye
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    libportaudio2 \
-    libportaudiocore1 \
-    portaudio19-dev \
-    python3-dev \
-    gcc \
-    make \
-    pkg-config \
+# Install system dependencies with proper error handling
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        libportaudio2 \
+        libportaudiocore1 \
+        portaudio19-dev \
+        python3-dev \
+        gcc \
+        make \
+        pkg-config \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Create symbolic links for PortAudio headers
