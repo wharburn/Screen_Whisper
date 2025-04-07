@@ -40,6 +40,11 @@ class MicrophoneStream:
         self._audio_buffer = None
         self._closed = True
         self._initialized = False
+        self._mock_mode = False
+        self._mock_data = None
+        self._file_mode = False
+        self._audio_file = None
+        self._file_chunks = []
 
     async def __aenter__(self):
         try:
@@ -68,30 +73,37 @@ class MicrophoneStream:
                 input_device_index = input_devices[0][0]
                 logger.info(f"Using input device: {input_devices[0][1]} (index: {input_device_index})")
             else:
-                logger.warning("No input devices found, using default device")
+                logger.warning("No input devices found, using demo audio file")
+                self._file_mode = True
+                # Load demo audio file
+                await self._load_demo_audio()
             
             # Open the audio stream with error handling
             try:
-                self._stream = self._audio_interface.open(
-                    format=pyaudio.paInt16,
-                    channels=1,
-                    rate=self._rate,
-                    input=True,
-                    frames_per_buffer=self._chunk,
-                    stream_callback=self._fill_buffer,
-                    input_device_index=input_device_index,
-                    start=False  # Don't start immediately
-                )
-                
-                if not self._stream:
-                    raise RuntimeError("Failed to open audio stream")
-                
-                # Start the stream
-                self._stream.start_stream()
-                
-                # Verify stream is running
-                if not self._stream.is_active():
-                    raise RuntimeError("Stream failed to start")
+                if self._file_mode:
+                    # In file mode, we don't need a real stream
+                    logger.info("Using demo audio file")
+                else:
+                    self._stream = self._audio_interface.open(
+                        format=pyaudio.paInt16,
+                        channels=1,
+                        rate=self._rate,
+                        input=True,
+                        frames_per_buffer=self._chunk,
+                        stream_callback=self._fill_buffer,
+                        input_device_index=input_device_index,
+                        start=False  # Don't start immediately
+                    )
+                    
+                    if not self._stream:
+                        raise RuntimeError("Failed to open audio stream")
+                    
+                    # Start the stream
+                    self._stream.start_stream()
+                    
+                    # Verify stream is running
+                    if not self._stream.is_active():
+                        raise RuntimeError("Stream failed to start")
                 
                 self._closed = False
                 self._initialized = True
@@ -111,6 +123,53 @@ class MicrophoneStream:
             logger.error(f"Error initializing audio stream: {str(e)}")
             await self.__aexit__(None, None, None)
             raise RuntimeError(f"Failed to initialize audio stream: {str(e)}")
+
+    async def _load_demo_audio(self):
+        """Load a demo audio file for testing."""
+        try:
+            # Use existing MP3 file
+            demo_file_path = os.path.join('static', 'audio', 'hello-what-you-doing-42455.mp3')
+            
+            if not os.path.exists(demo_file_path):
+                logger.error(f"Demo audio file not found at {demo_file_path}")
+                raise FileNotFoundError(f"Demo audio file not found at {demo_file_path}")
+            
+            logger.info(f"Loading demo audio file from {demo_file_path}")
+            
+            try:
+                # Convert MP3 to WAV format in memory
+                import pydub
+                audio = pydub.AudioSegment.from_mp3(demo_file_path)
+                
+                # Set the frame rate to match our requirements
+                if audio.frame_rate != self._rate:
+                    audio = audio.set_frame_rate(self._rate)
+                
+                # Convert to mono if stereo
+                if audio.channels > 1:
+                    audio = audio.set_channels(1)
+                
+                # Get raw audio data
+                audio_data = audio.raw_data
+                
+                # Split into chunks
+                chunk_size = self._chunk * 2  # 2 bytes per sample for 16-bit audio
+                for i in range(0, len(audio_data), chunk_size):
+                    chunk = audio_data[i:i+chunk_size]
+                    if len(chunk) == chunk_size:  # Only add complete chunks
+                        self._file_chunks.append(chunk)
+                
+                logger.info(f"Loaded {len(self._file_chunks)} chunks from demo audio file")
+                
+            except Exception as e:
+                logger.error(f"Error processing demo audio file: {str(e)}")
+                raise
+            
+        except Exception as e:
+            logger.error(f"Error loading demo audio: {str(e)}")
+            # Fall back to silence if file loading fails
+            self._mock_mode = True
+            self._mock_data = b'\x00\x00' * self._chunk
 
     async def __aexit__(self, type, value, traceback):
         self._closed = True
@@ -148,21 +207,43 @@ class MicrophoneStream:
         if not self._initialized:
             raise RuntimeError("Audio stream not initialized")
             
-        while not self._closed:
-            try:
-                if not self._stream or not self._stream.is_active():
-                    logger.error("Stream is not active")
+        if self._file_mode:
+            # In file mode, yield chunks from the file
+            logger.info("Using demo audio file for streaming")
+            for chunk in self._file_chunks:
+                if self._closed:
                     break
-                    
-                chunk = await self._audio_buffer.get()
-                if chunk:
+                yield chunk
+                await asyncio.sleep(0.1)  # Simulate real-time audio
+            # Loop the file
+            while not self._closed:
+                for chunk in self._file_chunks:
+                    if self._closed:
+                        break
                     yield chunk
-            except Exception as e:
-                logger.error(f"Error in audio generator: {str(e)}")
-                break
+                    await asyncio.sleep(0.1)  # Simulate real-time audio
+        elif self._mock_mode:
+            # In mock mode, generate silence data
+            while not self._closed:
+                await asyncio.sleep(0.1)  # Simulate real-time audio
+                yield self._mock_data
+        else:
+            # Normal mode with real microphone
+            while not self._closed:
+                try:
+                    if not self._stream or not self._stream.is_active():
+                        logger.error("Stream is not active")
+                        break
+                        
+                    chunk = await self._audio_buffer.get()
+                    if chunk:
+                        yield chunk
+                except Exception as e:
+                    logger.error(f"Error in audio generator: {str(e)}")
+                    break
 
 # Initialize Flask and SocketIO
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static')
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key')
 sio = SocketIO(app, async_mode='eventlet', cors_allowed_origins="*")
 
@@ -260,14 +341,22 @@ async def sender(ws, stream):
     try:
         logger.info("Starting sender task")
         chunk_count = 0
+        
+        # Check if we're in file mode
+        if stream._file_mode:
+            logger.info("Sender is using demo audio file")
+        
         async for chunk in stream.generator():
-            if stream._stream.is_stopped():
+            if stream._closed:
                 logger.info("Stream closed, stopping sender")
                 break
+                
             chunk_count += 1
             if chunk_count % 10 == 0:  # Log every 10th chunk to avoid flooding logs
                 logger.info(f"Sent {chunk_count} audio chunks to Deepgram")
+                
             await ws.send(chunk)
+            
         logger.info(f"Sender task completed after sending {chunk_count} chunks")
     except Exception as e:
         logger.error(f"Error in sender: {e}")
@@ -379,13 +468,26 @@ async def handle_listening(sid, source_lang, target_lang):
         listen_tasks[sid]['tasks'].append(consumer_task)
         
         # Initialize the microphone stream
+        stream = None
         try:
             stream = MicrophoneStream()
             await stream.__aenter__()
+            logger.info(f"Successfully initialized audio stream for {sid}")
         except Exception as e:
             logger.error(f"Failed to initialize microphone stream: {str(e)}")
-            sio.emit('error', {'message': "Failed to initialize microphone. Please check your audio settings."}, room=sid)
-            return
+            sio.emit('error', {'message': "Failed to initialize microphone. Using demo audio instead."}, room=sid)
+            # Try to use demo audio file
+            try:
+                stream = MicrophoneStream()
+                stream._file_mode = True
+                await stream._load_demo_audio()
+                stream._closed = False
+                stream._initialized = True
+                logger.info(f"Successfully initialized demo audio for {sid}")
+            except Exception as demo_error:
+                logger.error(f"Failed to initialize demo audio: {str(demo_error)}")
+                sio.emit('error', {'message': "Failed to initialize audio. Please try again later."}, room=sid)
+                return
 
         try:
             # Create a WebSocket connection to Deepgram for speech recognition
@@ -449,10 +551,11 @@ async def handle_listening(sid, source_lang, target_lang):
                 
         finally:
             # Clean up the stream
-            try:
-                await stream.__aexit__(None, None, None)
-            except Exception as e:
-                logger.error(f"Error closing stream: {str(e)}")
+            if stream:
+                try:
+                    await stream.__aexit__(None, None, None)
+                except Exception as e:
+                    logger.error(f"Error closing stream: {str(e)}")
                 
     except Exception as e:
         logger.error(f"Error in handle_listening: {str(e)}")
