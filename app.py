@@ -298,7 +298,8 @@ def start_listening(data=None):
     logger.info(f"Language preferences - Source: {source_lang}, Target: {target_lang}")
     
     # Create a background task to handle the async operations
-    sio.start_background_task(handle_listening, sid, source_lang, target_lang)
+    task = sio.start_background_task(handle_listening, sid, source_lang, target_lang)
+    listen_tasks[sid] = [task]
     
     return True
 
@@ -310,7 +311,7 @@ async def handle_listening(sid, source_lang, target_lang):
         
         # Start the consumer task to process transcripts and translations
         consumer_task = asyncio.create_task(consumer(queue, sid, source_lang, target_lang))
-        listen_tasks[sid] = [consumer_task]
+        listen_tasks[sid].append(consumer_task)
         
         # Initialize the microphone stream
         async with MicrophoneStream() as stream:
