@@ -281,9 +281,13 @@ def handle_connect():
 def handle_disconnect():
     logger.info(f"Client disconnected: {request.sid}")
     if request.sid in listen_tasks:
-        for task in listen_tasks[request.sid]:
+        # Cancel all asyncio tasks
+        for task in listen_tasks[request.sid]['tasks']:
             if not task.done():
                 task.cancel()
+        # Clean up the thread
+        if 'thread' in listen_tasks[request.sid]:
+            listen_tasks[request.sid]['thread'].join(timeout=1.0)
         del listen_tasks[request.sid]
 
 @sio.on('start_stream')
@@ -298,8 +302,7 @@ def start_listening(data=None):
     logger.info(f"Language preferences - Source: {source_lang}, Target: {target_lang}")
     
     # Create a background task to handle the async operations
-    task = sio.start_background_task(handle_listening, sid, source_lang, target_lang)
-    listen_tasks[sid] = [task]
+    sio.start_background_task(handle_listening, sid, source_lang, target_lang)
     
     return True
 
@@ -311,7 +314,7 @@ async def handle_listening(sid, source_lang, target_lang):
         
         # Start the consumer task to process transcripts and translations
         consumer_task = asyncio.create_task(consumer(queue, sid, source_lang, target_lang))
-        listen_tasks[sid].append(consumer_task)
+        listen_tasks[sid] = [consumer_task]
         
         # Initialize the microphone stream
         async with MicrophoneStream() as stream:
@@ -370,20 +373,24 @@ async def handle_listening(sid, source_lang, target_lang):
         # Clean up tasks if they exist
         if sid in listen_tasks:
             for task in listen_tasks[sid]:
-                if not task.done():
-                    task.cancel()
+                if isinstance(task, asyncio.Task):
+                    if not task.done():
+                        task.cancel()
             del listen_tasks[sid]
 
 @sio.on('stop_stream')
 def stop_listening():
     sid = request.sid
     logger.info(f"Stopping listening session for {sid}")
+    
     if sid in listen_tasks:
         for task in listen_tasks[sid]:
-            if not task.done():
-                task.cancel()
+            if isinstance(task, asyncio.Task):
+                if not task.done():
+                    task.cancel()
         del listen_tasks[sid]
-        sio.emit('status', {'message': 'Listening stopped'}, room=sid)
+    
+    return True
 
 if __name__ == '__main__':
     logger.info("Starting application...")
