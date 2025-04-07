@@ -11,6 +11,11 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
+# Create symbolic links for PortAudio headers
+RUN ln -s /usr/include/portaudio.h /usr/local/include/portaudio.h && \
+    ln -s /usr/include/pa_linux_alsa.h /usr/local/include/pa_linux_alsa.h && \
+    ln -s /usr/include/pa_unix_oss.h /usr/local/include/pa_unix_oss.h
+
 # Set working directory
 WORKDIR /app
 
