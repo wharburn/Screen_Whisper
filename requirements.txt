@@ -13,3 +13,4 @@ dnspython==2.3.0
 aiohttp==3.8.5
 httpcore==0.9.1
 httpx==0.13.3
+python-dotenv==1.0.0
