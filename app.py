@@ -150,10 +150,14 @@ async def consumer(queue, sid, source_lang, target_lang):
     
     while True:
         try:
+            logger.info(f"Waiting for transcript from queue for {sid}")
             speaker, transcript, is_final = await queue.get()
             
             if not transcript:
+                logger.info(f"Empty transcript received for {sid}, continuing")
                 continue
+                
+            logger.info(f"Received transcript for {sid}: '{transcript}' (final: {is_final})")
                 
             # Emit the transcript immediately
             await sio.emit('recognition', {
@@ -206,38 +210,64 @@ async def consumer(queue, sid, source_lang, target_lang):
 async def sender(ws, stream):
     """Send audio data to Deepgram WebSocket."""
     try:
+        logger.info("Starting sender task")
+        chunk_count = 0
         async for chunk in stream.generator():
             if stream.closed:
+                logger.info("Stream closed, stopping sender")
                 break
+            chunk_count += 1
+            if chunk_count % 10 == 0:  # Log every 10th chunk to avoid flooding logs
+                logger.info(f"Sent {chunk_count} audio chunks to Deepgram")
             await ws.send(chunk)
+        logger.info(f"Sender task completed after sending {chunk_count} chunks")
     except Exception as e:
         logger.error(f"Error in sender: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 async def receiver(ws, queue):
     """Receive transcriptions from Deepgram WebSocket."""
     try:
+        logger.info("Starting receiver task")
         async for msg in ws:
+            logger.info(f"Received message from Deepgram: {msg[:100]}...")  # Log first 100 chars
             res = json.loads(msg)
             
             transcript = res.get("channel", {}).get("alternatives", [{}])[0].get("transcript", "")
             
             if not transcript:
+                logger.info("Empty transcript received from Deepgram")
                 continue
                 
-            counter = Counter([x["speaker"] for x in res["channel"]["alternatives"][0]["words"]])
+            logger.info(f"Extracted transcript: '{transcript}'")
             
-            if not counter:
-                continue
-                
-            speaker = counter.most_common(1)[0][0]
+            # Check if we have words with speaker information
+            words = res.get("channel", {}).get("alternatives", [{}])[0].get("words", [])
+            if not words:
+                logger.info("No words with speaker information found")
+                # Use a default speaker if none is found
+                speaker = "unknown"
+            else:
+                counter = Counter([x.get("speaker", "unknown") for x in words])
+                speaker = counter.most_common(1)[0][0]
+                logger.info(f"Speaker identified: {speaker}")
+            
+            is_final = bool(res.get("is_final", False))
+            logger.info(f"Is final: {is_final}")
             
             if queue.full():
+                logger.info("Queue is full, removing oldest item")
                 _ = await queue.get()
                 queue.task_done()
-            await queue.put((speaker, transcript, bool(res.get("is_final", False))))
+                
+            logger.info(f"Putting transcript in queue: '{transcript}' (speaker: {speaker}, final: {is_final})")
+            await queue.put((speaker, transcript, is_final))
             
     except Exception as e:
         logger.error(f"Error in receiver: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 @app.route('/')
 def index():
@@ -256,14 +286,14 @@ def handle_disconnect():
         del listen_tasks[request.sid]
 
 @sio.on('start_stream')
-async def start_listening():
+async def start_listening(data=None):
     sid = request.sid
     try:
         logger.info(f"Starting listening session for {sid}")
         
         # Get language preferences from the client
-        source_lang = request.args.get('source_lang', 'en-US')
-        target_lang = request.args.get('target_lang', 'EN')
+        source_lang = data.get('source_lang', 'en-US') if data else 'en-US'
+        target_lang = data.get('target_lang', 'EN') if data else 'EN'
         
         logger.info(f"Language preferences - Source: {source_lang}, Target: {target_lang}")
         

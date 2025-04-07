@@ -29,7 +29,8 @@ COPY requirements.txt .
 
 # Install Python packages with specific options for PyAudio
 RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir --global-option='build_ext' --global-option='-I/usr/include' PyAudio==0.2.11
+    pip install --no-cache-dir --global-option='build_ext' --global-option='-I/usr/include' PyAudio==0.2.11 && \
+    pip install --no-cache-dir werkzeug==2.0.3
 
 # Copy the rest of the application
 COPY . .
