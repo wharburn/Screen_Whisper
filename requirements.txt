@@ -3,5 +3,4 @@ python-socketio==5.11.1
 python-dotenv==1.0.1
 websockets==12.0
 pyaudio
-portaudio
 gunicorn==21.2.0
