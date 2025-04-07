@@ -260,18 +260,64 @@ async def start_listening():
     sid = request.sid
     try:
         logger.info(f"Starting listening session for {sid}")
+        
+        # Get language parameters from the request
+        data = request.args
+        source_lang = data.get('source_lang', 'en-US')
+        target_lang = data.get('target_lang', 'es')
+        
+        logger.info(f"Translation languages - Source: {source_lang}, Target: {target_lang}")
+        
+        # Create a queue for passing data between components
+        queue = asyncio.Queue(maxsize=10)
+        
+        # Start the consumer task for processing transcripts and translations
+        consumer_task = asyncio.create_task(consumer(queue, sid, source_lang, target_lang))
+        
+        # Store the task for cleanup on disconnect
+        if sid not in listen_tasks:
+            listen_tasks[sid] = []
+        listen_tasks[sid].append(consumer_task)
+        
+        # Start the audio stream
         async with MicrophoneStream() as stream:
-            while True:
-                try:
-                    data = await stream.read()
-                    if data is None:
-                        break
-                    # Process audio data here
-                    await sio.emit('audio_data', {'data': data}, room=sid)
-                except Exception as e:
-                    logger.error(f"Error processing audio: {str(e)}")
-                    await sio.emit('error', {'message': str(e)}, room=sid)
-                    break
+            # Create a task for sending audio data to Deepgram
+            sender_task = None
+            
+            try:
+                # Connect to Deepgram WebSocket
+                deepgram_url = f"wss://api.deepgram.com/v1/listen?encoding=linear16&sample_rate={RATE}&channels=1&language={source_lang}&model=nova-2&smart_format=true&diarize=true"
+                
+                # Add API key to headers
+                headers = {
+                    "Authorization": f"Token {os.getenv('DEEPGRAM_API_KEY')}"
+                }
+                
+                # Connect to Deepgram
+                async with websockets.connect(deepgram_url, extra_headers=headers) as ws:
+                    # Start sender and receiver tasks
+                    sender_task = asyncio.create_task(sender(ws, stream))
+                    receiver_task = asyncio.create_task(receiver(ws, queue))
+                    
+                    # Store tasks for cleanup
+                    listen_tasks[sid].extend([sender_task, receiver_task])
+                    
+                    # Wait for tasks to complete
+                    await asyncio.gather(sender_task, receiver_task)
+            except Exception as e:
+                logger.error(f"Error in WebSocket connection: {str(e)}")
+                await sio.emit('error', {'message': f"WebSocket error: {str(e)}"}, room=sid)
+            finally:
+                # Cancel tasks if they exist
+                if sender_task and not sender_task.done():
+                    sender_task.cancel()
+                
+                # Signal the consumer to stop
+                await queue.put((None, None, True))
+                
+                # Wait for consumer to finish
+                if not consumer_task.done():
+                    await consumer_task
     except Exception as e:
         logger.error(f"Error starting listening session for {sid}: {str(e)}")
         await sio.emit('error', {'message': str(e)}, room=sid)
