@@ -1,7 +1,6 @@
 services:
   - type: web
     name: screenwhisper
-    env: docker
     plan: free
     dockerfilePath: ./Dockerfile
     autoDeploy: true
