@@ -1,0 +1,14 @@
+LICENSE
+README.md
+pyproject.toml
+livetranslate/__init__.py
+livetranslate/fullscreen_gui.py
+livetranslate/gui.py
+livetranslate/main.py
+livetranslate/mic.py
+livetranslate/translate.py
+livetranslate.egg-info/PKG-INFO
+livetranslate.egg-info/SOURCES.txt
+livetranslate.egg-info/dependency_links.txt
+livetranslate.egg-info/requires.txt
+livetranslate.egg-info/top_level.txt

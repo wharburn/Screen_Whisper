@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: screenwhisper
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
+    envVars:
+      - key: DEEPL_API_KEY
+        value: "<your_deepl_api_key>"
+      - key: DEEPGRAM_API_KEY
+        value: "<your_deepgram_api_key>"
+      - key: USE_DEEPL_PRO
+        value: "false"
+    ports:
+      - 10000 

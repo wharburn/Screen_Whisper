@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: livetranslate
+Version: 0.1.0
+Requires-Python: >=3.11
+License-File: LICENSE
+Requires-Dist: websockets==12.0
+Requires-Dist: PySide6==6.6.0
+Requires-Dist: PyAudio==0.2.14
+Requires-Dist: aiohttp==3.9.1
+Requires-Dist: python-dotenv
+Provides-Extra: dev
+Requires-Dist: pyright==1.1.337; extra == "dev"
+Requires-Dist: ruff==0.1.6; extra == "dev"
+Dynamic: license-file

@@ -1,0 +1,9 @@
+websockets==12.0
+PySide6==6.6.0
+PyAudio==0.2.14
+aiohttp==3.9.1
+python-dotenv
+
+[dev]
+pyright==1.1.337
+ruff==0.1.6
