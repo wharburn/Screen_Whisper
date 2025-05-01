@@ -66,7 +66,7 @@ ScreenWhisper supports a wide range of languages including:
 
 4. Run the application:
    ```bash
-   python app.py
+   python xapp.py
    ```
 
 5. Open your browser and navigate to:
