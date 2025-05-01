@@ -1,4 +1,4 @@
-# ScreenWhisper
+# ScreenWhisper - FINAL VERSION
 
 ![ScreenWhisper Logo](/static/images/SWlogo.png)
 
