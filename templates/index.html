@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
     <title>Live Translator</title>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <script src="https://cdn.socket.io/4.0.1/socket.io.min.js"></script>
@@ -15,17 +17,17 @@
                 <div class="w-48">
                     <img src="/static/images/SWlogo.png" alt="ScreenWhisper Logo" class="h-12 w-auto">
                 </div>
-                <button id="startButton" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition">
+                <button id="startButton" type="button" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition">
                     Start Listening
                 </button>
             </div>
-            
+
             <!-- Language Selection -->
             <div class="mb-6">
                 <div class="flex space-x-4">
                     <div class="flex-1">
-                        <label class="block text-sm font-medium text-gray-300 mb-2">Source Language</label>
-                        <select id="sourceLanguage" class="w-full p-2 border rounded bg-gray-800 text-white border-gray-700">
+                        <label for="sourceLanguage" class="block text-sm font-medium text-gray-300 mb-2">Source Language</label>
+                        <select id="sourceLanguage" name="sourceLanguage" aria-label="Source Language" class="w-full p-2 border rounded bg-gray-800 text-white border-gray-700">
                             <option value="en-US">English (US)</option>
                             <option value="es-ES">Spanish</option>
                             <option value="fr-FR">French</option>
@@ -59,7 +61,7 @@
                     </div>
                     <div class="flex-1">
                         <label class="block text-sm font-medium text-gray-300 mb-2">Target Language</label>
-                        <select id="targetLanguage" class="w-full p-2 border rounded bg-gray-800 text-white border-gray-700">
+                        <select id="targetLanguage" aria-label="Target Language" class="w-full p-2 border rounded bg-gray-800 text-white border-gray-700">
                             <option value="EN">English</option>
                             <option value="ES">Spanish</option>
                             <option value="FR">French</option>
@@ -105,7 +107,7 @@
                     <h3 class="font-medium mt-4 mb-2 text-gray-300">Source (<span id="sourceLanguageDisplay"></span>)</h3>
                     <div id="currentRecognition" class="text-gray-400 italic"></div>
                 </div>
-                
+
                 <div class="p-4 bg-gray-800 rounded border border-gray-700">
                     <h3 class="font-medium mb-2 text-gray-300">Translation History</h3>
                     <div id="translationHistory" class="space-y-2"></div>
@@ -116,7 +118,7 @@
 
     <script>
         // Socket.io setup
-        const socket = io();
+        const socket = io('http://localhost:5002');
         let isListening = false;
         let mediaRecorder;
         let audioStream;
@@ -146,7 +148,7 @@
             statusMessage.textContent = message;
             statusMessage.className = `mb-6 p-4 rounded ${type === 'error' ? 'bg-red-900 text-red-200' : 'bg-blue-900 text-blue-200'}`;
             statusMessage.classList.remove('hidden');
-            
+
             if (type === 'info') {
                 setTimeout(() => {
                     if (statusMessage.textContent === message) {
@@ -168,9 +170,45 @@
                     startButton.textContent = 'Initializing...';
                     showStatus('Initializing microphone...', 'info');
 
-                    // Request microphone permission and start streaming
-                    audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    showStatus('Connecting to translation service...', 'info');
+                    // Request microphone permission with specific constraints
+                    // Start with basic audio constraints
+                    let constraints = { audio: true };
+
+                    try {
+                        // First try to get audio with basic constraints
+                        audioStream = await navigator.mediaDevices.getUserMedia(constraints);
+                        showStatus('Microphone access granted...', 'info');
+
+                        // Log audio track settings to console for debugging
+                        const audioTrack = audioStream.getAudioTracks()[0];
+                        console.log('Initial audio track settings:', audioTrack.getSettings());
+
+                        // Stop this stream, we'll create a new one with better settings
+                        audioStream.getTracks().forEach(track => track.stop());
+
+                        // Now try with more specific constraints
+                        constraints = {
+                            audio: {
+                                channelCount: 1,
+                                sampleRate: 16000,
+                                echoCancellation: true,
+                                noiseSuppression: true,
+                                autoGainControl: true
+                            }
+                        };
+
+                        audioStream = await navigator.mediaDevices.getUserMedia(constraints);
+                        showStatus('Connecting to translation service...', 'info');
+
+                        // Log the new audio track settings
+                        const newAudioTrack = audioStream.getAudioTracks()[0];
+                        console.log('Optimized audio track settings:', newAudioTrack.getSettings());
+                    } catch (error) {
+                        console.warn('Could not set specific audio constraints, using defaults:', error);
+                        // Fall back to basic audio if specific constraints fail
+                        audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                        showStatus('Connecting to translation service (using default audio settings)...', 'info');
+                    }
 
                     // Start listening with selected languages
                     socket.emit('start_listening', {
@@ -178,8 +216,57 @@
                         target_lang: targetSelect.value
                     });
 
-                    // Set up MediaRecorder to stream audio
-                    mediaRecorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm' });
+                    // Set up MediaRecorder to stream audio with proper format for Deepgram
+                    // Try different MIME types based on browser support
+                    let options;
+                    const supportedMimeTypes = [
+                        'audio/webm;codecs=pcm',
+                        'audio/webm;codecs=opus',
+                        'audio/webm',
+                        'audio/ogg;codecs=opus',
+                        'audio/mp4;codecs=mp4a.40.2',
+                        'audio/mp4',
+                        'audio/mpeg',
+                        'audio/wav',
+                        'audio/aac'
+                    ];
+
+                    // Find the first supported MIME type
+                    const supportedType = supportedMimeTypes.find(type => MediaRecorder.isTypeSupported(type));
+
+                    if (supportedType) {
+                        options = {
+                            mimeType: supportedType,
+                            audioBitsPerSecond: 16000
+                        };
+                        console.log(`Using supported MIME type: ${supportedType}`);
+                    } else {
+                        // Fall back to browser default
+                        options = {
+                            audioBitsPerSecond: 16000
+                        };
+                        console.log('No supported MIME type found, using browser default');
+                    }
+
+                    console.log('Using MediaRecorder options:', options);
+
+                    // Try to use the preferred format, but fall back to browser defaults if not supported
+                    try {
+                        mediaRecorder = new MediaRecorder(audioStream, options);
+                        console.log('MediaRecorder created successfully with options');
+                    } catch (e) {
+                        console.warn('Error creating MediaRecorder with options, using browser default', e);
+                        try {
+                            mediaRecorder = new MediaRecorder(audioStream);
+                            console.log('MediaRecorder created with default options');
+                        } catch (err) {
+                            console.error('Failed to create MediaRecorder:', err);
+                            showStatus('Error: Your browser does not support audio recording. Please try a different browser.', 'error');
+                            startButton.disabled = false;
+                            startButton.textContent = 'Start Listening';
+                            throw err;
+                        }
+                    }
                     mediaRecorder.ondataavailable = function(e) {
                         if (e.data.size > 0 && isListening) {
                             e.data.arrayBuffer().then(buffer => {
@@ -253,11 +340,29 @@
 
         // Handle errors
         socket.on('error', (data) => {
-            showStatus(data.message, 'error');
-            if (startButton.disabled) {
-                startButton.disabled = false;
-                startButton.textContent = 'Start Listening';
+            let errorMessage = data.message;
+
+            // Provide more user-friendly error messages for common issues
+            if (errorMessage.includes('HTTP 401')) {
+                errorMessage = 'Authentication failed: Invalid Deepgram API key. Please check SETUP_INSTRUCTIONS.md for details on how to set up your API key.';
+            } else if (errorMessage.includes('WebSocket connection')) {
+                errorMessage = 'Connection to speech recognition service failed. This may be due to network issues or an invalid API key.';
             }
+
+            showStatus(errorMessage, 'error');
+
+            // Reset UI state
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+
+            if (audioStream) {
+                audioStream.getTracks().forEach(track => track.stop());
+            }
+
+            isListening = false;
+            startButton.disabled = false;
+            startButton.textContent = 'Start Listening';
         });
 
         // Handle connection events
@@ -276,4 +381,4 @@
         });
     </script>
 </body>
-</html> 
+</html>
