@@ -118,6 +118,8 @@
         // Socket.io setup
         const socket = io();
         let isListening = false;
+        let mediaRecorder;
+        let audioStream;
 
         // UI elements
         const startButton = document.getElementById('startButton');
@@ -165,19 +167,31 @@
                     startButton.disabled = true;
                     startButton.textContent = 'Initializing...';
                     showStatus('Initializing microphone...', 'info');
-                    
-                    // Request microphone permission
-                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    stream.getTracks().forEach(track => track.stop()); // Stop the stream after permission is granted
-                    
+
+                    // Request microphone permission and start streaming
+                    audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                     showStatus('Connecting to translation service...', 'info');
-                    
+
                     // Start listening with selected languages
                     socket.emit('start_listening', {
                         source_lang: sourceSelect.value,
                         target_lang: targetSelect.value
                     });
-                    
+
+                    // Set up MediaRecorder to stream audio
+                    mediaRecorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm' });
+                    mediaRecorder.ondataavailable = function(e) {
+                        if (e.data.size > 0 && isListening) {
+                            e.data.arrayBuffer().then(buffer => {
+                                socket.emit('audio_chunk', new Uint8Array(buffer));
+                            });
+                        }
+                    };
+                    mediaRecorder.onstop = function() {
+                        audioStream.getTracks().forEach(track => track.stop());
+                    };
+                    mediaRecorder.start(100); // send audio every 100ms
+
                     isListening = true;
                     startButton.textContent = 'Stop Listening';
                     startButton.disabled = false;
@@ -197,10 +211,14 @@
                     startButton.textContent = 'Start Listening';
                 }
             } else {
-                socket.emit('stop_listening');
+                // Stop streaming
+                if (mediaRecorder && isListening) {
+                    mediaRecorder.stop();
+                }
                 isListening = false;
                 startButton.textContent = 'Start Listening';
-                showStatus('Listening stopped', 'info');
+                showStatus('Stopped listening', 'info');
+                socket.emit('stop_listening');
             }
         });
 

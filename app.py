@@ -3,12 +3,12 @@ import asyncio
 import json
 import websockets
 from urllib.parse import urlencode
-import pyaudio
-from aiohttp import web
 import socketio
 from dotenv import load_dotenv
 from collections import deque, Counter
 import logging
+import io
+from aiohttp import web
 
 from livetranslate.translate import deepl_language, translate_text_deepl
 
@@ -26,80 +26,8 @@ HOST = os.getenv('HOST', '0.0.0.0')
 RATE = 16000
 CHUNK = RATE // 10  # 100ms chunks
 
-
-class MicrophoneStream:
-    """Opens a recording stream as a generator yielding the audio chunks."""
-
-    def __init__(self, rate=RATE, chunk=CHUNK):
-        self._rate = rate
-        self._chunk = chunk
-        self.loop = asyncio.get_event_loop()
-
-        # Create a thread-safe buffer of audio data
-        self._buff = asyncio.Queue()
-        self.closed = True
-        self._audio_interface = None
-        self._audio_stream = None
-
-    async def __aenter__(self):
-        try:
-            self._audio_interface = pyaudio.PyAudio()
-
-            # Open the audio stream
-            self._audio_stream = self._audio_interface.open(
-                format=pyaudio.paInt16,
-                channels=1,
-                rate=self._rate,
-                input=True,
-                frames_per_buffer=self._chunk,
-                stream_callback=self._fill_buffer,
-            )
-            self.closed = False
-            self._audio_stream.start_stream()
-            return self
-        except Exception as e:
-            if self._audio_interface:
-                self._audio_interface.terminate()
-            raise RuntimeError(f"Failed to initialize audio stream: {str(e)}")
-
-    async def __aexit__(self, *args):
-        """Closes the stream, regardless of whether the connection was lost or not."""
-        if self._audio_stream:
-            self._audio_stream.stop_stream()
-            self._audio_stream.close()
-        self.closed = True
-        # Signal the generator to terminate
-        await self._buff.put(None)
-        if self._audio_interface:
-            self._audio_interface.terminate()
-
-    def _fill_buffer(self, in_data, *_):
-        """Continuously collect data from the audio stream, into the buffer."""
-        if not self.closed:
-            self.loop.call_soon_threadsafe(self._buff.put_nowait, in_data)
-        return (in_data, pyaudio.paContinue)
-
-    async def generator(self):
-        """Generates audio chunks from the stream of audio data."""
-        while not self.closed:
-            # Use a blocking get() to ensure there's at least one chunk of data
-            chunk = await self._buff.get()
-            if chunk is None:
-                return
-            data = [chunk]
-
-            # Now consume whatever other data's still buffered
-            while True:
-                try:
-                    chunk = self._buff.get_nowait()
-                    if chunk is None:
-                        return
-                    data.append(chunk)
-                except asyncio.QueueEmpty:
-                    break
-
-            yield b"".join(data)
-
+# Buffer to store incoming audio per client
+client_audio_buffers = {}
 
 # Create a new aiohttp web application
 app = web.Application()
@@ -110,6 +38,9 @@ sio.attach(app)
 streams = {}
 listen_tasks = {}
 
+# Store per-client audio queues and Deepgram tasks
+client_audio_queues = {}
+client_deepgram_ws = {}
 
 async def consumer(queue, sid, source_lang, target_lang):
     """Process transcripts and translations."""
@@ -255,26 +186,25 @@ async def connect(sid, environ):
 async def disconnect(sid):
     """Handle client disconnection."""
     logger.info(f'Client disconnected: {sid}')
-    if sid in listen_tasks:
-        for task in listen_tasks[sid]:
-            task.cancel()
-        del listen_tasks[sid]
+    await stop_listening(sid)
+
+
+@sio.on('audio_chunk')
+async def handle_audio_chunk(sid, data):
+    # Put audio data into the client's queue for streaming to Deepgram
+    if sid in client_audio_queues:
+        await client_audio_queues[sid].put(data)
 
 
 @sio.event
 async def start_listening(sid, data):
-    """Start the listening session for a client."""
     if sid in listen_tasks and not listen_tasks[sid].done():
         logger.warning(f"Client {sid} already has an active listening session")
         return
-
     try:
-        # Check for Deepgram API key
         key = os.getenv('DEEPGRAM_API_KEY')
         if not key:
             raise RuntimeError("DEEPGRAM_API_KEY not found in environment")
-
-        # Set up Deepgram connection parameters
         params = {
             'diarize': 'true',
             'punctuate': 'true',
@@ -284,8 +214,6 @@ async def start_listening(sid, data):
             'encoding': 'linear16',
             'sample_rate': str(RATE),
         }
-
-        # Select model based on language
         if params['language'].split("-")[0] in ("en"):
             params["model"] = "nova-3"
         elif params['language'].split("-")[0] in (
@@ -296,76 +224,78 @@ async def start_listening(sid, data):
             params["model"] = "nova-2"
         else:
             params["model"] = "enhanced"
-
         query_string = urlencode(params)
         deepgram_url = f"wss://api.deepgram.com/v1/listen?{query_string}"
-
-        # Create queue for communication between tasks
-        queue = asyncio.Queue(maxsize=1)
-
-        # Start the microphone stream
-        logger.info(f"Initializing microphone for client {sid}")
-        try:
-            stream = MicrophoneStream()
-            streams[sid] = stream
-            async with stream:
-                logger.info(f"Microphone initialized successfully for client {sid}")
-
-                # Connect to Deepgram
-                logger.info(f"Connecting to Deepgram for client {sid}")
-                async with websockets.connect(
-                        deepgram_url,
-                        extra_headers={"Authorization": f"Token {key}"}
-                ) as ws:
-                    logger.info(f"Connected to Deepgram for client {sid}")
-
-                    # Create tasks for the three main components
-                    consumer_task = asyncio.create_task(
-                        consumer(queue, sid, data.get('source_lang', 'auto'), data.get('target_lang', 'EN'))
-                    )
-                    sender_task = asyncio.create_task(sender(ws, stream))
-                    receiver_task = asyncio.create_task(receiver(ws, queue))
-
-                    # Store tasks
-                    listen_tasks[sid] = asyncio.gather(consumer_task, sender_task, receiver_task)
-
-                    try:
-                        await listen_tasks[sid]
-                    except asyncio.CancelledError:
-                        logger.info(f"Listening session cancelled for client {sid}")
-                    except Exception as e:
-                        logger.error(f"Error in listening session for {sid}: {e}")
-                        await asyncio.create_task(
-                            sio.emit('error', {'message': f"Listening session error: {str(e)}"}, room=sid))
-                    finally:
-                        # Clean up
-                        if sid in streams:
-                            del streams[sid]
-                        if sid in listen_tasks:
-                            del listen_tasks[sid]
-        except Exception as e:
-            logger.error(f"Failed to initialize microphone for client {sid}: {e}")
-            await asyncio.create_task(
-                sio.emit('error', {'message': f"Microphone initialization failed: {str(e)}"}, room=sid))
-            if sid in streams:
-                del streams[sid]
-            return
-
+        # Create per-client audio queue
+        audio_queue = asyncio.Queue(maxsize=10)
+        client_audio_queues[sid] = audio_queue
+        # Connect to Deepgram
+        ws = await websockets.connect(
+            deepgram_url,
+            extra_headers={"Authorization": f"Token {key}"}
+        )
+        client_deepgram_ws[sid] = ws
+        # Start sender and receiver tasks
+        async def sender():
+            try:
+                while True:
+                    chunk = await audio_queue.get()
+                    await ws.send(chunk)
+            except asyncio.CancelledError:
+                logger.info(f"Sender task cancelled for {sid}")
+                return
+            except Exception as e:
+                logger.error(f"Sender error for {sid}: {e}")
+        async def receiver():
+            try:
+                async for msg in ws:
+                    res = json.loads(msg)
+                    transcript = res.get("channel", {}).get("alternatives", [{}])[0].get("transcript", "")
+                    is_final = res.get("is_final", False)
+                    if transcript:
+                        await sio.emit('recognition', {'text': transcript, 'is_final': is_final}, room=sid)
+                        if is_final:
+                            # Translate and emit
+                            translation = await translate_text_deepl(
+                                transcript,
+                                deepl_language(data.get('source_lang', 'en').split('-')[0]),
+                                deepl_language(data.get('target_lang', 'EN')),
+                                ""
+                            )
+                            await sio.emit('translation', {
+                                'original': transcript,
+                                'translated': translation or transcript,
+                                'source_lang': data.get('source_lang', 'en-US'),
+                                'target_lang': data.get('target_lang', 'EN')
+                            }, room=sid)
+            except asyncio.CancelledError:
+                logger.info(f"Receiver task cancelled for {sid}")
+                return
+            except Exception as e:
+                logger.error(f"Receiver error for {sid}: {e}")
+        listen_tasks[sid] = asyncio.gather(sender(), receiver())
+        await sio.emit('status', {'message': 'Ready to receive audio'}, room=sid)
     except Exception as e:
         logger.error(f"Error starting listening session for {sid}: {e}")
-        await asyncio.create_task(sio.emit('error', {'message': str(e)}, room=sid))
-        if sid in streams:
-            del streams[sid]
+        await sio.emit('error', {'message': str(e)}, room=sid)
+        if sid in client_audio_queues:
+            del client_audio_queues[sid]
+        if sid in client_deepgram_ws:
+            await client_deepgram_ws[sid].close()
+            del client_deepgram_ws[sid]
 
 
 @sio.event
 async def stop_listening(sid):
-    """Stop the listening session for a client."""
     logger.info(f"Stopping listening session for {sid}")
     if sid in listen_tasks:
-        for task in listen_tasks[sid]:
-            task.cancel()
+        listen_tasks[sid].cancel()
         del listen_tasks[sid]
+    if sid in client_audio_queues:
+        del client_audio_queues[sid]
+    if sid in client_deepgram_ws:
+        await client_deepgram_ws[sid].close()
+        del client_deepgram_ws[sid]
 
 
 if __name__ == '__main__':
