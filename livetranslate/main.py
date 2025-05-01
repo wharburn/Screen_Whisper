@@ -24,7 +24,6 @@ from websockets.client import WebSocketClientProtocol
 
 from livetranslate.fullscreen_gui import start_gui as start_gui_fullscreen
 from livetranslate.gui import start_gui
-from livetranslate.mic import RATE, MicrophoneStream
 from livetranslate.translate import (
     deepl_language,
     translate_text_deepl,
@@ -191,7 +190,7 @@ async def main(
 
     # Google Translate functionality has been removed
 
-    async with MicrophoneStream(loop) as stream, websockets.connect(
+    async with websockets.connect(
         deepgram_url, extra_headers={"Authorization": f"Token {key}"}
     ) as ws, TaskGroup() as tg:
         tg.create_task(
