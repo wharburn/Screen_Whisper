@@ -19,5 +19,8 @@
       pkgs.portaudio
       pkgs.libasound2
     ];
+    # Add C include paths for PyAudio compilation
+    C_INCLUDE_PATH = "${pkgs.portaudio}/include";
+    CPATH = "${pkgs.portaudio}/include";
   };
 }

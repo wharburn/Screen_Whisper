@@ -12,6 +12,14 @@ import subprocess
 def install_dependencies():
     """Install Python dependencies from requirements.txt."""
     print("Installing Python dependencies...")
+    # Try to install PyAudio first using the system's PortAudio
+    subprocess.check_call([
+        sys.executable, "-m", "pip", "install", 
+        "--global-option=build_ext", 
+        f"--global-option=--include-dirs={os.environ.get('C_INCLUDE_PATH', '/nix/store/portaudio/include')}",
+        "pyaudio==0.2.14"
+    ])
+    # Then install the rest of the dependencies
     subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
     print("Dependencies installed successfully!")
 
