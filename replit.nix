@@ -10,6 +10,10 @@
     pkgs.python311Packages.pyaudio
     pkgs.python311Packages.aiohttp
     pkgs.python311Packages.python-socketio
+    pkgs.python311Packages.websockets
+    pkgs.python311Packages.python-dotenv
+    pkgs.python311Packages.requests
+    pkgs.python311Packages.jinja2
   ];
   env = {
     PYTHONBIN = "${pkgs.python311}/bin/python3.11";
