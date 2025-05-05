@@ -1,5 +1,9 @@
+# This is a Python application
 run = "python run_app.py"
 entrypoint = "app.py"
+
+# Explicitly set the language to Python
+language = "python3"
 
 # Enable the python3 language server
 [languages.python3]
@@ -32,3 +36,7 @@ HOST = "0.0.0.0"
 # Enable the dev server for the web app
 [dev]
 port = 8080
+
+# Explicitly ignore Node.js files
+[gitignore]
+overrides = ["package.json", "package-lock.json", "node_modules/"]
