@@ -7,7 +7,13 @@ import os
 import json
 import logging
 import asyncio
+import ssl
 from typing import Dict, Any, Optional, Callable, Coroutine
+
+# Create an SSL context that doesn't verify certificates (for development only)
+ssl_context = ssl.create_default_context()
+ssl_context.check_hostname = False
+ssl_context.verify_mode = ssl.CERT_NONE
 
 # Import the Deepgram SDK
 try:
@@ -105,13 +111,16 @@ class DeepgramLiveClient:
                     # Get the connection
                     connection = self.client.listen.websocket.v("1")
 
+                    # Set the SSL context to disable certificate verification
+                    connection.options.ssl_context = ssl_context
+
                     # Start the connection
                     if not connection.start(live_options):
                         logger.error(f"Failed to start Deepgram connection for session {session_id}")
                         return False
                 else:
                     # For older SDK with Deepgram
-                    connection = await self.client.transcription.live(options)
+                    connection = await self.client.transcription.live(options, ssl_context=ssl_context)
 
                 logger.info(f"Successfully created Deepgram live transcription for session {session_id}")
             except Exception as e:

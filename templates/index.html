@@ -20,6 +20,9 @@
                 <button id="startButton" type="button" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition">
                     Start Listening
                 </button>
+                <button id="testButton" type="button" class="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700 transition ml-2" onclick="console.log('Test button clicked'); socket.emit('start_listening', {source_lang: 'en-US', target_lang: 'FR'});">
+                    Test
+                </button>
             </div>
 
             <!-- Language Selection -->
@@ -118,7 +121,9 @@
 
     <script>
         // Socket.io setup
-        const socket = io('http://localhost:5002');
+        const socket = io({
+            transports: ['websocket', 'polling']
+        });
         let isListening = false;
         let mediaRecorder;
         let audioStream;
@@ -164,8 +169,10 @@
 
         // Handle start/stop button click
         startButton.addEventListener('click', async () => {
+            console.log('Start button clicked');
             if (!isListening) {
                 try {
+                    console.log('Starting listening...');
                     startButton.disabled = true;
                     startButton.textContent = 'Initializing...';
                     showStatus('Initializing microphone...', 'info');
@@ -211,10 +218,15 @@
                     }
 
                     // Start listening with selected languages
+                    console.log('Emitting start_listening event with:', {
+                        source_lang: sourceSelect.value,
+                        target_lang: targetSelect.value
+                    });
                     socket.emit('start_listening', {
                         source_lang: sourceSelect.value,
                         target_lang: targetSelect.value
                     });
+                    console.log('Emitted start_listening event');
 
                     // Set up MediaRecorder to stream audio with proper format for Deepgram
                     // Try different MIME types based on browser support
@@ -367,6 +379,7 @@
 
         // Handle connection events
         socket.on('connect', () => {
+            console.log('Socket.IO connected');
             showStatus('Connected to server', 'info');
         });
 
