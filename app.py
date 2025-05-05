@@ -36,6 +36,20 @@ load_dotenv()
 PORT = int(os.getenv('PORT', 5002))
 HOST = os.getenv('HOST', '0.0.0.0')
 
+# Function to find an available port if the default is in use
+def find_available_port(start_port, max_attempts=10):
+    """Try to find an available port starting from start_port."""
+    import socket
+    for port in range(start_port, start_port + max_attempts):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind((HOST, port))
+                return port
+        except OSError:
+            logger.warning(f"Port {port} is already in use, trying next port")
+            continue
+    return start_port  # Return the original port if no available ports found
+
 # Audio settings
 RATE = 16000
 CHUNK = RATE // 10  # 100ms chunks
@@ -682,4 +696,17 @@ if __name__ == '__main__':
     # Register cleanup function to be called on shutdown
     app.on_shutdown.append(cleanup_background_tasks)
 
-    web.run_app(app, host=HOST, port=PORT)
+    # Find an available port if the default is in use
+    available_port = find_available_port(PORT)
+    if available_port != PORT:
+        logger.info(f"Port {PORT} is in use, using port {available_port} instead")
+        PORT = available_port
+
+    try:
+        web.run_app(app, host=HOST, port=PORT)
+    except OSError as e:
+        if "address already in use" in str(e).lower():
+            logger.error(f"Port {PORT} is already in use. Please try a different port by setting the PORT environment variable.")
+            logger.info("Example: PORT=5003 python app.py")
+        else:
+            logger.error(f"Error starting server: {e}")

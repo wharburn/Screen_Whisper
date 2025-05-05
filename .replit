@@ -1,0 +1,34 @@
+run = "python run_app.py"
+entrypoint = "app.py"
+
+# Enable the python3 language server
+[languages.python3]
+pattern = "**/*.py"
+syntax = "python"
+
+[languages.python3.languageServer]
+start = ["pylsp"]
+
+# Package configuration
+[packager]
+language = "python3"
+ignoredPackages = ["unit_tests"]
+
+[packager.features]
+enabledForHosting = true
+packageSearch = true
+guessImports = true
+
+# Nix configuration
+[nix]
+channel = "stable-22_11"
+
+# Environment variables setup
+[env]
+PYTHONPATH = "${PYTHONPATH}:${REPL_HOME}"
+PORT = "8080"
+HOST = "0.0.0.0"
+
+# Enable the dev server for the web app
+[dev]
+port = 8080
