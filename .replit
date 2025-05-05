@@ -32,6 +32,7 @@ channel = "stable-22_11"
 PYTHONPATH = "${PYTHONPATH}:${REPL_HOME}"
 PORT = "8080"
 HOST = "0.0.0.0"
+USE_MOCK_SPEECH = "true"
 
 # Enable the dev server for the web app
 [dev]
