@@ -6,7 +6,7 @@
     pkgs.python311Packages.wheel
     pkgs.portaudio
     pkgs.ffmpeg
-    pkgs.libasound2
+    pkgs.alsaLib
     pkgs.python311Packages.pyaudio
     pkgs.python311Packages.aiohttp
     pkgs.python311Packages.python-socketio
@@ -21,7 +21,7 @@
     PYTHONPATH = "${pkgs.python311Packages.pip}/lib/python3.11/site-packages";
     LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
       pkgs.portaudio
-      pkgs.libasound2
+      pkgs.alsaLib
     ];
   };
 }
