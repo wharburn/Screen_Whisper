@@ -1,9 +1,5 @@
-# This is a Python application
-run = "python app.py"
+run = "python run.py"
 entrypoint = "app.py"
-
-# Explicitly set the language to Python
-language = "python3"
 
 # Enable the python3 language server
 [languages.python3]
@@ -32,18 +28,7 @@ channel = "stable-22_11"
 PYTHONPATH = "${PYTHONPATH}:${REPL_HOME}"
 PORT = "8080"
 HOST = "0.0.0.0"
-USE_MOCK_SPEECH = "true"
 
 # Enable the dev server for the web app
 [dev]
 port = 8080
-
-# Explicitly ignore Node.js files
-[gitignore]
-overrides = ["package.json", "package-lock.json", "node_modules/"]
-
-# Deployment configuration
-[deployment]
-run = ["sh", "-c", "python app.py"]
-buildCommand = "pip install -r requirements.txt"
-deploymentTarget = "cloudrun"
