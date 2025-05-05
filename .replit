@@ -1,5 +1,5 @@
 # This is a Python application
-run = "python run_app.py"
+run = "python app.py"
 entrypoint = "app.py"
 
 # Explicitly set the language to Python
@@ -40,3 +40,9 @@ port = 8080
 # Explicitly ignore Node.js files
 [gitignore]
 overrides = ["package.json", "package-lock.json", "node_modules/"]
+
+# Deployment configuration
+[deployment]
+run = ["sh", "-c", "python app.py"]
+buildCommand = "pip install -r requirements.txt"
+deploymentTarget = "cloudrun"
